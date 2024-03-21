@@ -1,5 +1,4 @@
 import time
-import sys
 import os
 import torch
 from rwkv_pytorch import RWKV_RNN, RWKV_TOKENIZER, sample_logits
@@ -7,10 +6,8 @@ from rwkv_pytorch import RWKV_RNN, RWKV_TOKENIZER, sample_logits
 if __name__ == '__main__':
     # 初始化模型参数
     args = {
-        'MODEL_NAME': 'rwkv-x060-1b6-world-v2.1-33%trained-20240311-ctx4k',
-        'n_layer': 24,
-        'n_embd': 2048,
-        'vocab_size': 65536
+        'MODEL_NAME': 'RWKV-x060-World-3B-v2-20240228-ctx4096', #模型文件的名字，pth结尾的权重文件。
+        'vocab_size': 65536 #词表大小，不要乱改
     }
     
     # 加载模型和分词器
@@ -20,10 +17,10 @@ if __name__ == '__main__':
     print("Done.")
     
     # 设置续写的初始字符串和参数
-    initial_string = "\nElon Musk has"
+    initial_string = "Elon Musk has"
     batch_size = 3  # 指定batch数
-    TEMPERATURE = 0.9  # 温度参数
-    TOP_P = 0.1  # Top-p采样参数
+    TEMPERATURE = 1  # 温度参数
+    TOP_P = 0  # Top-p采样参数
     LENGTH_PER_TRIAL = 100  # 每次试验生成的长度
     
     # 编码初始字符串
@@ -31,7 +28,7 @@ if __name__ == '__main__':
     token = torch.tensor(encoded_input).long().transpose(0, 1)  # 转置以匹配模型输入的形状
     
     # 初始化状态
-    init_state = torch.zeros(batch_size, 1584, 2048)  # 根据模型的state_size和n_embd初始化状态
+    init_state = torch.zeros(batch_size, model.state_size[0], model.state_size[1])  # 根据模型的state_size和n_embd初始化状态
     
     # 预填充状态
     for t in token:
