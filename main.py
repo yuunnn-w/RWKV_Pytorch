@@ -45,7 +45,8 @@ if __name__ == '__main__':
     for step in range(LENGTH_PER_TRIAL):  # 生成指定数量的token
         token_sampled = torch.tensor(sample_logits(out, TEMPERATURE, TOP_P)).long()
         token = torch.cat((token, token_sampled), 1)
-        out, state = model.forward(token_sampled, state)
+        with torch.no_grad():
+            out, state = model.forward(token_sampled, state)
         
         # 清除屏幕并打印结果
         os.system('cls' if os.name == 'nt' else 'clear')
