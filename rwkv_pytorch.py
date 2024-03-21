@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+from typing import Tuple
+
 
 class RWKV_Block(nn.Module):
     """
@@ -53,9 +55,9 @@ class RWKV_Block(nn.Module):
         self.att_gate = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.att_gate.weight = nn.Parameter(block_w['att.gate.weight'])
 
-        self.att_group_norm = nn.GroupNorm(num_groups=n_head, num_channels=n_embd, eps=1e-5, affine=True)
-        self.att_group_norm.weight = nn.Parameter(block_w['att.ln_x.weight'])
-        self.att_group_norm.bias = nn.Parameter(block_w['att.ln_x.bias'])
+        #self.att_group_norm = nn.GroupNorm(num_groups=n_head, num_channels=n_embd, eps=1e-5, affine=True)
+        self.att_group_norm_weight = nn.Parameter(block_w['att.ln_x.weight'])
+        self.att_group_norm_bias = nn.Parameter(block_w['att.ln_x.bias'])
 
         # 初始化前馈参数
         self.ffn_time_maa_k = nn.Parameter(block_w['ffn.time_maa_k'])
@@ -66,6 +68,33 @@ class RWKV_Block(nn.Module):
         self.ffn_receptance.weight = nn.Parameter(block_w['ffn.receptance.weight'])
         self.ffn_value = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ffn_value.weight = nn.Parameter(block_w['ffn.value.weight'])
+        
+    def manual_group_norm(self, x: torch.Tensor, num_groups: int, weight: torch.Tensor, bias: torch.Tensor, eps: float) -> torch.Tensor:
+        N, C = x.shape
+        #if C % num_groups != 0:
+            #raise ValueError("num_channels must be divisible by num_groups")
+        #加上这个会有无法推断静态图的警告
+        
+        channels_per_group = C // num_groups
+        
+        # 重塑x以便于分组
+        x = x.view(N, num_groups, channels_per_group)
+        
+        # 计算每组的均值和方差
+        mean = x.mean(dim=2, keepdim=True)
+        var = x.var(dim=2, keepdim=True, unbiased=False)
+        
+        # 归一化
+        x_normalized = (x - mean) / torch.sqrt(var + eps)
+        
+        # 恢复原始的形状
+        x_normalized = x_normalized.view(N, C)
+        
+        # 应用权重和偏置
+        x_scaled = x_normalized * weight
+        x_shifted = x_scaled + bias
+
+        return x_shifted
 
     def channel_mixing(self, x: torch.Tensor, state: torch.Tensor, i: int) -> torch.Tensor:
         """
@@ -140,7 +169,8 @@ class RWKV_Block(nn.Module):
 
         # 展平x并应用组归一化和门控
         x = x.flatten(start_dim=1)  
-        x = self.att_group_norm(x) * g  
+        #x = self.att_group_norm(x) * g
+        x = self.manual_group_norm(x, num_groups=H, weight=self.att_group_norm_weight, bias=self.att_group_norm_bias, eps=64e-5) * g
         
         # 应用输出层并返回结果
         return self.att_output(x)
@@ -211,7 +241,7 @@ class RWKV_RNN(nn.Module):
         self.head = nn.Linear(self.n_embd, args['vocab_size'], bias=False)
         self.head.weight = nn.Parameter(w['head.weight'])
 
-    def forward(self, token: torch.Tensor, state: torch.Tensor) -> torch.Tensor:
+    def forward(self, token: torch.Tensor, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         模型的前向传播。
 
