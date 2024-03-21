@@ -178,32 +178,37 @@ class RWKV_RNN(nn.Module):
         w = torch.load(args['MODEL_NAME'] + '.pth', map_location='cpu')
         
         # 将所有权重转换为float32
+        self.num_layer = 0
         for k in w.keys():
             w[k] = w[k].float()
             if '.time_' in k: w[k] = w[k].squeeze()
             if '.time_faaaa' in k: w[k] = w[k].unsqueeze(-1)
+            if "blocks" in k: self.num_layer = max(self.num_layer, int(k.split(".")[1]))
+        self.num_layer += 1
 
         self.n_head = w['blocks.0.att.time_faaaa'].shape[0]
-        self.head_size = self.args['n_embd'] // self.n_head
+        self.n_embd = w['blocks.0.ln1.weight'].shape[0]
+        self.head_size = self.n_embd // self.n_head
+        self.state_size = [self.num_layer * (2 + self.head_size), self.n_embd]
 
-        print(f"state_size:[{self.args['n_layer'] * (2 + self.head_size)}, {self.args['n_embd']}]")
-                
+        print(f"state_size:{self.state_size}")
+        
         # 初始化模型参数
         self.emb = nn.Embedding.from_pretrained(w['emb.weight'], freeze=True)
-        self.ln0 = nn.LayerNorm(self.args['n_embd'])
+        self.ln0 = nn.LayerNorm(self.n_embd)
         self.ln0.weight = nn.Parameter(w['blocks.0.ln0.weight'])
         self.ln0.bias = nn.Parameter(w['blocks.0.ln0.bias'])
         self.blocks = nn.ModuleList()
         
-        for i in range(args['n_layer']):
+        for i in range(self.num_layer):
             # 提取当前块的权重
             block_w = {k[len(f'blocks.{i}.'):]: v for k, v in w.items() if f'blocks.{i}.' in k}
-            self.blocks.append(RWKV_Block(block_w, self.args['n_embd'], self.n_head))
+            self.blocks.append(RWKV_Block(block_w, self.n_embd, self.n_head))
 
-        self.ln_out = nn.LayerNorm(self.args['n_embd'])
+        self.ln_out = nn.LayerNorm(self.n_embd)
         self.ln_out.weight = nn.Parameter(w['ln_out.weight'])
         self.ln_out.bias = nn.Parameter(w['ln_out.bias'])
-        self.head = nn.Linear(self.args['n_embd'], args['vocab_size'], bias=False)
+        self.head = nn.Linear(self.n_embd, args['vocab_size'], bias=False)
         self.head.weight = nn.Parameter(w['head.weight'])
 
     def forward(self, token: torch.Tensor, state: torch.Tensor) -> torch.Tensor:
