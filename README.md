@@ -28,4 +28,33 @@ This is an inference framework for the RWKV large language model implemented pur
 
 ## 预计未来基于本项目适配香橙派推出的AI Pro开发板，实现在昇腾的生态上推理国产大语言模型RWKV！！！
 
+### 另外，经过测试，v6 1.6B导出并优化后的onnx模型含有如下算子：
+
+- Operator Type: `Gather`, Count: 145
+- Operator Type: `Squeeze`, Count: 121
+- Operator Type: `ReduceMean`, Count: 148
+- Operator Type: `Sub`, Count: 122
+- Operator Type: `Mul`, Count: 484
+- Operator Type: `Add`, Count: 675
+- Operator Type: `Sqrt`, Count: 74
+- Operator Type: `Div`, Count: 74
+- Operator Type: `Shape`, Count: 240
+- Operator Type: `Expand`, Count: 240
+- Operator Type: `Range`, Count: 72
+- Operator Type: `Reshape`, Count: 384
+- Operator Type: `Equal`, Count: 72
+- Operator Type: `Where`, Count: 72
+- Operator Type: `Unsqueeze`, Count: 192
+- Operator Type: `Concat`, Count: 192
+- Operator Type: `ScatterND`, Count: 72
+- Operator Type: `MatMul`, Count: 337
+- Operator Type: `Tanh`, Count: 48
+- Operator Type: `Split`, Count: 24
+- Operator Type: `Exp`, Count: 48
+- Operator Type: `Neg`, Count: 24
+- Operator Type: `Sigmoid`, Count: 48
+- Operator Type: `Slice`, Count: 24
+- Operator Type: `Flatten`, Count: 24
+- Operator Type: `Relu`, Count: 24
+
 
