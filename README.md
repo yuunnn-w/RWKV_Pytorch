@@ -7,12 +7,22 @@ This is an inference framework for the RWKV large language model implemented pur
 - **原生pytorch实现！**
 - **支持batch推理！**
 - **代码整洁，容易阅读和二次开发！**
+- **支持导出onnx格式模型！**
 
-# 使用方法
+## 使用方法
+1. 克隆仓库 `git -b dev clone https://github.com/yuunnn-w/RWKV_Pytorch.git`
+2. 执行`cd RWKV_Pytorch`进入仓库目录，执行`pip install -r requirements.txt`安装依赖。
+3. 下载RWKV6模型，官方仓库地址：[BlinkDL/rwkv-6-world](https://huggingface.co/BlinkDL/rwkv-6-world/tree/main)，将模型权重放置在仓库目录下。
+4. 修改main.py 文件的`MODEL_NAME`参数。
+5. 执行`python main.py`，即可看到batch推理效果。
 
-1. 下载RWKV6模型，官方仓库地址：[BlinkDL/rwkv-6-world](https://huggingface.co/BlinkDL/rwkv-6-world/tree/main)。
-2. 修改main.py 文件的参数。
-3. 执行`python main.py`运行即可。
+## 导出onnx方法
+1. 修改`onnx_export.py`文件参数为你想导出的模型。
+2. 执行`python onnx_export.py`即可导出到./model路径。
+3. （可选）执行`mkdir ONNX`创建一个用于存放简化算子模型的目录。
+4. （可选）执行`python simplify_large_onnx.py -m model/{model name}.onnx -o ONNX/{model name}.onnx`来简化模型，简化后的模型将存放在ONNX目录。
+
+**已知op17版本才支持LayerNorm算子，op18版本才支持GroupNorm算子，目前torch的preview版本支持op18，但是无法导出，current版本只支持op17，能够正常导出含LayerNorm算子的模型。目前仓库dev分支给出了一个全部用LayerNorm算子去模拟GroupNorm算子的模型，即`rwkv_layer_norm.py`文件，而rwkv_pytorch.py所包含的模型其中的LayerNorm算子已经全部重写来支持更低的op_set版本。**
 
 **注意，本框架目前仅支持RWKV v6模型，具体版本号为x060**
 
