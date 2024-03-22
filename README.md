@@ -3,11 +3,13 @@ This is an inference framework for the RWKV large language model implemented pur
 
 这是一个用纯Pytorch原生实现的RWKV大语言模型的推理框架，官方的原生实现过于复杂且无法拓展生态，让我们加入灵活的Pytorch阵营，一起开源起来吧！
 
+****
+
 ## 特性
 - **原生pytorch实现！**
 - **支持batch推理！**
 - **代码整洁，容易阅读和二次开发！**
-- **支持导出onnx格式模型！**
+- **支持导出并推理onnx格式模型！**
 
 ## 使用方法
 1. 克隆仓库 `git clone https://github.com/yuunnn-w/RWKV_Pytorch.git`
@@ -26,7 +28,9 @@ This is an inference framework for the RWKV large language model implemented pur
 
 **注意，本框架目前仅支持RWKV v6模型，具体版本号为x060**
 
+****
 ## 预计未来基于本项目适配香橙派推出的AI Pro开发板，实现在昇腾的生态上推理国产大语言模型RWKV！！！
+****
 
 ### 另外，经过测试，v6 1.6B导出并优化后的onnx模型含有如下算子：
 
@@ -57,4 +61,7 @@ This is an inference framework for the RWKV large language model implemented pur
 - Operator Type: `Flatten`, Count: 24
 - Operator Type: `Relu`, Count: 24
 
+****
+
+优化模型用到的仓库：[onnxsim_large_model](https://github.com/luchangli03/onnxsim_large_model.git)
 
