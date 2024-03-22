@@ -49,12 +49,14 @@ def sample_logits(out: np.ndarray, temperature: float = 1.0, top_p: float = 0.8)
 
 if __name__ == '__main__':
     # Load the ONNX model
+    print("Loading model and tokenizer...")
     model_path = './model/rwkv-x060-1b6-world-v2.1-66%trained-20240319-ctx4k.onnx'
     session = ort.InferenceSession(model_path)
 
     # Load the tokenizer
     tokenizer = RWKV_TOKENIZER("rwkv_vocab_v20230424.txt")
-
+    print("Done.")
+    
     # Set the initial string and parameters for inference
     initial_string = "Elon Musk has"
     batch_size = 3
@@ -69,11 +71,13 @@ if __name__ == '__main__':
     # Initialize the state
     state = np.zeros((batch_size, session.get_inputs()[1].shape[1], session.get_inputs()[1].shape[2]), dtype=np.float32)
     #print(token, token.shape)
+    print("Prefill the state...")
     # Prefill the state by running the initial tokens through the model
     for t in token:
         ort_inputs = {'token': t.reshape(batch_size, 1), 'input_state': state}
         ort_outs = session.run(None, ort_inputs)
         out, state = ort_outs
+    print("Done.")
 
     # Reset token to only contain the initial encoded input
     token = token.transpose()
