@@ -31,7 +31,7 @@ if __name__ == '__main__':
                       f"./model/{args['MODEL_NAME']}.onnx",
                       export_params=True, 
                       verbose=True,
-                      opset_version=17, #这里的op版本还没有测试最低可以多少，理论上是17，因为LayerNorm最低支持是17
+                      opset_version=12, #LayerNorm最低支持是op17
                       do_constant_folding=True,
                       input_names=['token', 'input_state'],
                       output_names=['out', 'out_state'],
