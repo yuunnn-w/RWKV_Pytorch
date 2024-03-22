@@ -21,12 +21,12 @@ class RWKV_Block(nn.Module):
         self.head_size = n_embd // n_head
         
         # 初始化层归一化
-        self.ln1 = nn.LayerNorm(n_embd)
-        self.ln1.weight = nn.Parameter(block_w['ln1.weight'])
-        self.ln1.bias = nn.Parameter(block_w['ln1.bias'])
-        self.ln2 = nn.LayerNorm(n_embd)
-        self.ln2.weight = nn.Parameter(block_w['ln2.weight'])
-        self.ln2.bias = nn.Parameter(block_w['ln2.bias'])
+        #self.ln1 = nn.LayerNorm(n_embd)
+        self.ln1_weight = nn.Parameter(block_w['ln1.weight'])
+        self.ln1_bias = nn.Parameter(block_w['ln1.bias'])
+        #self.ln2 = nn.LayerNorm(n_embd)
+        self.ln2_weight = nn.Parameter(block_w['ln2.weight'])
+        self.ln2_bias = nn.Parameter(block_w['ln2.bias'])
 
         # 初始化激活函数
         self.silu = nn.SiLU(inplace=False)
@@ -69,31 +69,57 @@ class RWKV_Block(nn.Module):
         self.ffn_value = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ffn_value.weight = nn.Parameter(block_w['ffn.value.weight'])
         
+    def manual_layer_norm(self, x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, eps: float) -> torch.Tensor:
+        """
+        人工层归一化函数
+        Args:
+            x (torch.Tensor): 输入张量，形状为 [Batch, 2048]。
+            weight (torch.Tensor): 归一化的权重张量，形状为 [2048]。
+            bias (torch.Tensor): 归一化的偏置张量，形状为 [2048]。
+            eps (float): 用于数值稳定性的小值，防止除以零。
+        
+        Returns:
+            torch.Tensor: 经过手动层归一化后的张量，形状与输入的 x 相同。
+
+        """
+        mean = x.mean(dim=1, keepdim=True)
+        var = x.var(dim=1, keepdim=True, unbiased=False)
+        x_normalized = (x - mean) / torch.sqrt(var + eps)
+        x_scaled = x_normalized * weight
+        x_shifted = x_scaled + bias
+        return x_shifted
+        
     def manual_group_norm(self, x: torch.Tensor, num_groups: int, weight: torch.Tensor, bias: torch.Tensor, eps: float) -> torch.Tensor:
+        """
+        人工组归一化函数。
+        Args:
+            x (torch.Tensor): 输入张量，形状为 [Batch, 2048]。
+            num_groups (int): 分组数，这里为 RWKV 的注意力头数。
+            weight (torch.Tensor): 归一化的权重张量，形状为 [2048]。
+            bias (torch.Tensor): 归一化的偏置张量，形状为 [2048]。
+            eps (float): 用于数值稳定性的小值，防止除以零。
+        
+        Returns:
+            torch.Tensor: 经过人工组归一化后的张量，形状与输入的 x 相同。
+
+        """
         N, C = x.shape
         #if C % num_groups != 0:
             #raise ValueError("num_channels must be divisible by num_groups")
         #加上这个会有无法推断静态图的警告
-        
         channels_per_group = C // num_groups
-        
         # 重塑x以便于分组
         x = x.view(N, num_groups, channels_per_group)
-        
         # 计算每组的均值和方差
         mean = x.mean(dim=2, keepdim=True)
         var = x.var(dim=2, keepdim=True, unbiased=False)
-        
         # 归一化
         x_normalized = (x - mean) / torch.sqrt(var + eps)
-        
         # 恢复原始的形状
         x_normalized = x_normalized.view(N, C)
-        
         # 应用权重和偏置
         x_scaled = x_normalized * weight
         x_shifted = x_scaled + bias
-
         return x_shifted
 
     def channel_mixing(self, x: torch.Tensor, state: torch.Tensor, i: int) -> torch.Tensor:
@@ -188,8 +214,8 @@ class RWKV_Block(nn.Module):
         Returns:
             torch.Tensor: 前向传播结果张量，形状与输入的x相同。
         """
-        x = x + self.time_mixing(self.ln1(x), state, i)
-        x = x + self.channel_mixing(self.ln2(x), state, i)
+        x = x + self.time_mixing(self.manual_layer_norm(x, self.ln1_weight, self.ln1_bias, 1e-5), state, i)
+        x = x + self.channel_mixing(self.manual_layer_norm(x, self.ln2_weight, self.ln2_bias, 1e-5), state, i)
         return x
     
 class RWKV_RNN(nn.Module):
@@ -225,9 +251,9 @@ class RWKV_RNN(nn.Module):
         
         # 初始化模型参数
         self.emb = nn.Embedding.from_pretrained(w['emb.weight'], freeze=True)
-        self.ln0 = nn.LayerNorm(self.n_embd)
-        self.ln0.weight = nn.Parameter(w['blocks.0.ln0.weight'])
-        self.ln0.bias = nn.Parameter(w['blocks.0.ln0.bias'])
+        #self.ln0 = nn.LayerNorm(self.n_embd)
+        self.ln0_weight = nn.Parameter(w['blocks.0.ln0.weight'])
+        self.ln0_bias = nn.Parameter(w['blocks.0.ln0.bias'])
         self.blocks = nn.ModuleList()
         
         for i in range(self.num_layer):
@@ -235,11 +261,31 @@ class RWKV_RNN(nn.Module):
             block_w = {k[len(f'blocks.{i}.'):]: v for k, v in w.items() if f'blocks.{i}.' in k}
             self.blocks.append(RWKV_Block(block_w, self.n_embd, self.n_head))
 
-        self.ln_out = nn.LayerNorm(self.n_embd)
-        self.ln_out.weight = nn.Parameter(w['ln_out.weight'])
-        self.ln_out.bias = nn.Parameter(w['ln_out.bias'])
+        #self.ln_out = nn.LayerNorm(self.n_embd)
+        self.ln_out_weight = nn.Parameter(w['ln_out.weight'])
+        self.ln_out_bias = nn.Parameter(w['ln_out.bias'])
         self.head = nn.Linear(self.n_embd, args['vocab_size'], bias=False)
         self.head.weight = nn.Parameter(w['head.weight'])
+        
+    def manual_layer_norm(self, x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, eps: float) -> torch.Tensor:
+        """
+        人工层归一化函数
+        Args:
+            x (torch.Tensor): 输入张量，形状为 [Batch, 2048]。
+            weight (torch.Tensor): 归一化的权重张量，形状为 [2048]。
+            bias (torch.Tensor): 归一化的偏置张量，形状为 [2048]。
+            eps (float): 用于数值稳定性的小值，防止除以零。
+        
+        Returns:
+            torch.Tensor: 经过手动层归一化后的张量，形状与输入的 x 相同。
+
+        """
+        mean = x.mean(dim=1, keepdim=True)
+        var = x.var(dim=1, keepdim=True, unbiased=False)
+        x_normalized = (x - mean) / torch.sqrt(var + eps)
+        x_scaled = x_normalized * weight
+        x_shifted = x_scaled + bias
+        return x_shifted
 
     def forward(self, token: torch.Tensor, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -252,11 +298,10 @@ class RWKV_RNN(nn.Module):
             torch.Tensor: 模型输出。
         """
         x = self.emb(token).squeeze(1)
-        x = self.ln0(x)
+        x = self.manual_layer_norm(x, self.ln0_weight, self.ln0_bias, 1e-5)
         for i, block in enumerate(self.blocks):
             x = block(x, state, i)
-
-        x = self.ln_out(x)
+        x = self.manual_layer_norm(x, self.ln_out_weight, self.ln_out_bias, 1e-5)
         x = self.head(x)
         return x, state
 
