@@ -158,11 +158,11 @@ class RWKV_Block(nn.Module):
         g = self.silu(self.att_gate(xg))
 
         # 使用注意力机制更新状态
-        s = state[:, (2+S)*i+2:(2+S)*(i+1), :].reshape(batch_size, H, S, S)
+        s = state[:, (2+S)*i+2:(2+S)*(i+1), :].view(batch_size, H, S, S)
         a = k @ v
         x = r @ (self.att_time_faaaa * a + s)
         s = a + w * s
-        state[:, (2+S)*i+2:(2+S)*(i+1), :] = s.reshape(batch_size, S, -1)
+        state[:, (2+S)*i+2:(2+S)*(i+1), :] = s.view(batch_size, S, -1)
 
         # 展平x并应用组归一化和门控
         x = x.flatten(start_dim=1)  
