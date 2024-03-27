@@ -109,7 +109,7 @@ class RWKV_Block(nn.Module):
         sx = state[:, i0] - x
         xk = x + sx * self.ffn_time_maa_k
         xr = x + sx * self.ffn_time_maa_r
-        state[:, i0] = x
+        state[:, i0].copy_(x)
         r = torch.sigmoid(self.ffn_receptance(xr))
         k = torch.square(torch.relu(self.ffn_key(xk)))
         output = r * self.ffn_value(k)
@@ -132,11 +132,11 @@ class RWKV_Block(nn.Module):
         S = self.head_size
         i1 = (2+S)*i+1
         sx = state[:, i1] - x
-        state[:, i1] = x
+        state[:, i1].copy_(x)
         
         xxx = x + sx * self.att_time_maa_x
         xxx = torch.tanh(xxx @ self.att_time_maa_w1).view(batch_size, 5, 1, -1)
-        xxx = torch.matmul(xxx, self.att_time_maa_w2).view(batch_size, 5, -1)
+        xxx = torch.matmul(xxx, self.att_time_maa_w2).squeeze(2)
         mw, mk, mv, mr, mg = xxx.unbind(dim=1)
     
         xw = x + sx * (self.att_time_maa_w + mw)
@@ -158,11 +158,11 @@ class RWKV_Block(nn.Module):
         g = self.silu(self.att_gate(xg))
 
         # 使用注意力机制更新状态
-        s = state[:, (2+S)*i+2:(2+S)*(i+1), :].reshape(batch_size, H, S, S)
+        s = state[:, (2+S)*i+2:(2+S)*(i+1), :].view(batch_size, H, S, S)
         a = k @ v
         x = r @ (self.att_time_faaaa * a + s)
         s = a + w * s
-        state[:, (2+S)*i+2:(2+S)*(i+1), :] = s.reshape(batch_size, S, -1)
+        state[:, (2+S)*i+2:(2+S)*(i+1), :] = s.view(batch_size, S, -1)
 
         # 展平x并应用组归一化和门控
         x = x.flatten(start_dim=1)  
