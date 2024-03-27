@@ -165,7 +165,7 @@ class RWKV_Block(nn.Module):
         
         xxx = x + sx * self.att_time_maa_x
         xxx = torch.tanh(xxx @ self.att_time_maa_w1).view(batch_size, 5, 1, -1)
-        xxx = torch.matmul(xxx, self.att_time_maa_w2).view(batch_size, 5, -1)
+        xxx = torch.matmul(xxx, self.att_time_maa_w2).squeeze(2) # .view(batch_size, 5, -1)
         mw, mk, mv, mr, mg = xxx.unbind(dim=1)
     
         xw = x + sx * (self.att_time_maa_w + mw)
@@ -187,14 +187,14 @@ class RWKV_Block(nn.Module):
         g = self.silu(self.att_gate(xg))
 
         # 使用注意力机制更新状态
-        s = state[:, (2+S)*i+2:(2+S)*(i+1), :].reshape(batch_size, H, S, S)  
+        s = state[:, (2+S)*i+2:(2+S)*(i+1), :].view(batch_size, H, S, S)  
         a = k @ v  
         x = r @ (self.att_time_faaaa * a + s)  
         s = a + w * s  
-        state[:, (2+S)*i+2:(2+S)*(i+1), :] = s.reshape(batch_size, S, -1)  
+        state[:, (2+S)*i+2:(2+S)*(i+1), :] = s.view(batch_size, S, -1)  
 
         # 展平x并应用组归一化和门控
-        x = x.flatten(start_dim=1)  
+        x = x.flatten(start_dim=1)
         #x = self.att_group_norm(x) * g
         x = self.manual_group_norm(x, num_groups=H, weight=self.att_group_norm_weight, bias=self.att_group_norm_bias, eps=64e-5) * g
         
