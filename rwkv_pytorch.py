@@ -231,7 +231,7 @@ class RWKV_RNN(nn.Module):
         self.eval()  
 
         # 加载权重
-        w = torch.load(args['MODEL_NAME'] + '.pth', map_location='cpu')
+        w = torch.load(args['MODEL_NAME'] + '.pth', map_location=args['device'])
         
         # 将所有权重转换为float32
         self.num_layer = 0
