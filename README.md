@@ -65,3 +65,12 @@ This is an inference framework for the RWKV large language model implemented pur
 
 优化模型用到的仓库：[onnxsim_large_model](https://github.com/luchangli03/onnxsim_large_model.git)
 
+## 贡献者
+
+<a href="https://github.com/yuunnn-w/RWKV_Pytorch/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=yuunnn-w/RWKV_Pytorch" />
+</a>
+
+**感谢各位大佬做出的贡献！**
+
+
