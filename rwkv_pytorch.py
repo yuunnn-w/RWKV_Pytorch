@@ -231,7 +231,7 @@ class RWKV_RNN(nn.Module):
         self.eval()  
 
         # 加载权重
-        w = torch.load(args['MODEL_NAME'] + '.pth', map_location='cpu')
+        w = torch.load(args['MODEL_NAME'] + '.pth', map_location=args['device'])
         
         # 将所有权重转换为float32
         self.num_layer = 0
@@ -323,7 +323,7 @@ def sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.
     # 对每个样本进行采样
     sampled_indices = []
     for sample_probs in probs:
-        sample_probs_np = sample_probs.detach().numpy()
+        sample_probs_np = sample_probs.detach().cpu().numpy()
         
         # 根据top_p截断概率分布
         sorted_probs = np.sort(sample_probs_np)[::-1]
