@@ -1,7 +1,9 @@
 import time
 import os
 import torch
-from rwkv_pytorch import RWKV_RNN, RWKV_TOKENIZER, sample_logits
+# from rwkv_pytorch import RWKV_RNN, RWKV_TOKENIZER, sample_logits
+from rwkv_pytorch import RWKV_RNN, sample_logits
+from rwkv_tokenizer import RWKV_TOKENIZER
 
 if __name__ == '__main__':
     # 初始化模型参数
