@@ -105,6 +105,30 @@ This is an inference framework for the RWKV large language model implemented pur
 ## 贡献者 (Contributors)
 
 <!-- readme: collaborators,contributors -start -->
+<table>
+<tr>
+    <td align="center">
+        <a href="https://github.com/yuunnn-w">
+            <img src="https://avatars.githubusercontent.com/u/91336323?v=4" width="100;" alt="yuunnn-w"/>
+            <br />
+            <sub><b>Yuunnn_w</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/WuTianyi321">
+            <img src="https://avatars.githubusercontent.com/u/48122470?v=4" width="100;" alt="WuTianyi321"/>
+            <br />
+            <sub><b>WuTianyi</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/jiamingkong">
+            <img src="https://avatars.githubusercontent.com/u/2761215?v=4" width="100;" alt="jiamingkong"/>
+            <br />
+            <sub><b>Null</b></sub>
+        </a>
+    </td></tr>
+</table>
 <!-- readme: collaborators,contributors -end -->
 
 ****
