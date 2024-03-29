@@ -165,7 +165,7 @@ class RWKV_Block(nn.Module):
         
         xxx = x + sx * self.att_time_maa_x
         xxx = torch.tanh(xxx @ self.att_time_maa_w1).view(batch_size, 5, 1, -1)
-        xxx = torch.matmul(xxx, self.att_time_maa_w2).view(batch_size, 5, -1)
+        xxx = torch.matmul(xxx, self.att_time_maa_w2).squeeze(2) # .view(batch_size, 5, -1)
         mw, mk, mv, mr, mg = xxx.unbind(dim=1)
     
         xw = x + sx * (self.att_time_maa_w + mw)
@@ -194,7 +194,7 @@ class RWKV_Block(nn.Module):
         state[:, (2+S)*i+2:(2+S)*(i+1), :] = s.view(batch_size, S, -1)  
 
         # 展平x并应用组归一化和门控
-        x = x.flatten(start_dim=1)  
+        x = x.flatten(start_dim=1)
         #x = self.att_group_norm(x) * g
         x = self.manual_group_norm(x, num_groups=H, weight=self.att_group_norm_weight, bias=self.att_group_norm_bias, eps=64e-5) * g
         
@@ -231,7 +231,7 @@ class RWKV_RNN(nn.Module):
         self.eval()  
 
         # 加载权重
-        w = torch.load(args['MODEL_NAME'] + '.pth', map_location='cpu')
+        w = torch.load(args['MODEL_NAME'] + '.pth', map_location=args['device'])
         
         # 将所有权重转换为float32
         self.num_layer = 0
@@ -323,7 +323,7 @@ def sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.
     # 对每个样本进行采样
     sampled_indices = []
     for sample_probs in probs:
-        sample_probs_np = sample_probs.detach().numpy()
+        sample_probs_np = sample_probs.detach().cpu().numpy()
         
         # 根据top_p截断概率分布
         sorted_probs = np.sort(sample_probs_np)[::-1]

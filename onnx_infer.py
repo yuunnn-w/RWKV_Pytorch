@@ -2,8 +2,8 @@ import time
 import os
 import numpy as np
 import onnxruntime as ort
-from rwkv_pytorch import RWKV_TOKENIZER
-
+#from rwkv_pytorch import RWKV_TOKENIZER
+from rwkv_tokenizer import RWKV_TOKENIZER #切换到速度更快的分词器
 import numpy as np
 
 def softmax(x, axis=None):

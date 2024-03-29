@@ -1,14 +1,19 @@
 import time
 import os
 import torch
-from rwkv_pytorch import RWKV_RNN, RWKV_TOKENIZER, sample_logits
+# from rwkv_pytorch import RWKV_RNN, RWKV_TOKENIZER, sample_logits
+from rwkv_pytorch import RWKV_RNN, sample_logits
+from rwkv_tokenizer import RWKV_TOKENIZER
 
 if __name__ == '__main__':
     # 初始化模型参数
     args = {
         'MODEL_NAME': 'RWKV-x060-World-3B-v2-20240228-ctx4096', #模型文件的名字，pth结尾的权重文件。
         'vocab_size': 65536 #词表大小，不要乱改
+        # ,'device': "cpu"
+        ,'device': "cuda"
     }
+    device = torch.device(args['device'])
     
     # 加载模型和分词器
     print("Loading model and tokenizer...")
@@ -25,10 +30,10 @@ if __name__ == '__main__':
     
     # 编码初始字符串
     encoded_input = tokenizer.encode([initial_string] * batch_size)
-    token = torch.tensor(encoded_input).long().transpose(0, 1)  # 转置以匹配模型输入的形状
+    token = torch.tensor(encoded_input).long().transpose(0, 1).to(device)   # 转置以匹配模型输入的形状
     
     # 初始化状态
-    init_state = torch.zeros(batch_size, model.state_size[0], model.state_size[1])  # 根据模型的state_size和n_embd初始化状态
+    init_state = torch.zeros(batch_size, model.state_size[0], model.state_size[1]).to(device)   # 根据模型的state_size和n_embd初始化状态
     
     # 预填充状态
     for t in token:
@@ -43,7 +48,7 @@ if __name__ == '__main__':
     # 续写生成
     out, state = init_out.clone(), init_state.clone()
     for step in range(LENGTH_PER_TRIAL):  # 生成指定数量的token
-        token_sampled = torch.tensor(sample_logits(out, TEMPERATURE, TOP_P)).long()
+        token_sampled = torch.tensor(sample_logits(out, TEMPERATURE, TOP_P)).long().to(device)
         token = torch.cat((token, token_sampled), 1)
         with torch.no_grad():
             out, state = model.forward(token_sampled, state)
