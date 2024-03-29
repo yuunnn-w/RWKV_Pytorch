@@ -9,9 +9,9 @@ from src.rwkv_tokenizer import RWKV_TOKENIZER
 if __name__ == '__main__':
     # 初始化模型参数
     args = {
-        'MODEL_NAME': 'RWKV-x060-World-3B-v2-20240228-ctx4096', #模型文件的名字，pth结尾的权重文件。
+        'MODEL_NAME': 'weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096', #模型文件的名字，pth结尾的权重文件。
         'vocab_size': 65536 #词表大小，不要乱改
-        ,'device': "cpu",
+        ,'device': "cuda",
         #,'device': "musa",
         "onnx_opset": "18",
     }
@@ -28,19 +28,19 @@ if __name__ == '__main__':
     # 加载模型和分词器
     print("Loading model and tokenizer...")
     model = RWKV_RNN(args).to(device)
-    tokenizer = RWKV_TOKENIZER("rwkv_vocab_v20230424.txt")
+    tokenizer = RWKV_TOKENIZER("asset/rwkv_vocab_v20230424.txt")
     print(model)
-    import time
-    #time.sleep(10)
     print("Done.")
     
     # 设置续写的初始字符串和参数
     initial_string = "Elon Musk has"
-
-    if device != 'cpu':
-        batch_size = 16
-    else:
-        batch_size = 1
+    batch_size = 16
+    # 这里设置batch_size
+    
+    #if device != 'cpu':
+        #batch_size = 16
+    #else:
+        #batch_size = 1
 
     TEMPERATURE = 1  # 温度参数
     TOP_P = 0  # Top-p采样参数
@@ -57,11 +57,6 @@ if __name__ == '__main__':
     for t in token:
         with torch.no_grad():
             out, state = model.forward(t.unsqueeze(1), state)
-    
-    # 预填充状态
-    for t in token:
-        with torch.no_grad():
-            out, state = model.forward(t.unsqueeze(1), state)
 
     token = token.transpose(0, 1)
     
@@ -71,10 +66,10 @@ if __name__ == '__main__':
     # 续写生成
     for step in range(LENGTH_PER_TRIAL):  # 生成指定数量的token
         # 下面的使用GPU来完成采样工作，使得GPU有更高的利用率
-        token_sampled = sample_logits(out.to(device) , TEMPERATURE, TOP_P)
+        token_sampled = sample_logits(out, TEMPERATURE, TOP_P)
         token = torch.cat((token, token_sampled), 1)
         with torch.no_grad():
-            out, state = model.forward(token_sampled.to(device) , state)
+            out, state = model.forward(token_sampled , state)
 
         # 清除屏幕并打印结果
         os.system('cls' if os.name == 'nt' else 'clear')
