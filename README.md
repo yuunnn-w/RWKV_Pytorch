@@ -104,9 +104,8 @@ This is an inference framework for the RWKV large language model implemented pur
 
 ## 贡献者 (Contributors)
 
-<a href="https://github.com/yuunnn-w/RWKV_Pytorch/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=yuunnn-w/RWKV_Pytorch" />
-</a>
+<!-- readme: collaborators,contributors -start -->
+<!-- readme: collaborators,contributors -end -->
 
 ****
 
