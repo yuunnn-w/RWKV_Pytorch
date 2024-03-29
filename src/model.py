@@ -14,7 +14,7 @@ class RWKV_Block(nn.Module):
         n_embd (int): 嵌入维度。
         n_head (int): 头数。
     """
-    def __init__(self, block_w: dict, n_embd: int, n_head: int, onnx_opset = 18):
+    def __init__(self, block_w: dict, n_embd: int, n_head: int, onnx_opset = 16):
         super().__init__()
         self.n_embd = n_embd
         self.n_head = n_head
@@ -67,7 +67,6 @@ class RWKV_Block(nn.Module):
             self.att_group_norm = nn.GroupNorm(num_groups=n_head, num_channels=n_embd, eps=1e-5, affine=True)
             self.att_group_norm.weight = nn.Parameter(block_w['att.ln_x.weight'])
             self.att_group_norm.bias = nn.Parameter(block_w['att.ln_x.bias'])
-            #self.layer_n = nn.LayerNorm([self.n_head, self.head_size], elementwise_affine=False, eps=64e-5)
         else:
             self.att_group_norm_weight = nn.Parameter(block_w['att.ln_x.weight'])
             self.att_group_norm_bias = nn.Parameter(block_w['att.ln_x.bias'])
@@ -83,7 +82,7 @@ class RWKV_Block(nn.Module):
         self.ffn_value = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ffn_value.weight = nn.Parameter(block_w['ffn.value.weight'])
 
-    def manual_layer_norm(self, x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, eps: float) -> torch.Tensor:
+    def manual_layer_norm(self, x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
         """
         人工层归一化函数
         Args:
@@ -103,7 +102,7 @@ class RWKV_Block(nn.Module):
         x_shifted = x_scaled + bias
         return x_shifted
         
-    def manual_group_norm(self, x: torch.Tensor, num_groups: int, weight: torch.Tensor, bias: torch.Tensor, eps: float) -> torch.Tensor:
+    def manual_group_norm(self, x: torch.Tensor, num_groups: int, weight: torch.Tensor, bias: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
         """
         人工组归一化函数。
         Args:
@@ -157,7 +156,6 @@ class RWKV_Block(nn.Module):
         xr = x + sx * self.ffn_time_maa_r
 
         r = torch.sigmoid(self.ffn_receptance(xr))
-        #k = torch.square(torch.relu(self.ffn_key(xk)))
         k = torch.relu(self.ffn_key(xk)).pow(2)
 
         output = r * self.ffn_value(k)
@@ -281,6 +279,7 @@ class RWKV_RNN(nn.Module):
         
         # 初始化模型参数
         self.emb = nn.Embedding.from_pretrained(w['emb.weight'], freeze=True)
+
         if self.onnx_opset >= 17:
             self.ln0 = nn.LayerNorm(self.n_embd)
             self.ln0.weight = nn.Parameter(w['blocks.0.ln0.weight'])
@@ -288,6 +287,7 @@ class RWKV_RNN(nn.Module):
         else:
             self.ln0_weight = nn.Parameter(w['blocks.0.ln0.weight'])
             self.ln0_bias = nn.Parameter(w['blocks.0.ln0.bias'])
+
         self.blocks = nn.ModuleList()
         
         for i in range(self.num_layer):
@@ -306,7 +306,7 @@ class RWKV_RNN(nn.Module):
         self.head = nn.Linear(self.n_embd, args['vocab_size'], bias=False)
         self.head.weight = nn.Parameter(w['head.weight'])
 
-    def manual_layer_norm(self, x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, eps: float) -> torch.Tensor:
+    def manual_layer_norm(self, x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
         """
         人工层归一化函数
         Args:
@@ -349,7 +349,7 @@ class RWKV_RNN(nn.Module):
         if self.onnx_opset >= 17:
             x = self.ln_out(x)
         else:
-            x = self.manual_layer_norm(x, self.ln0_weight, self.ln0_bias, 1e-5)
+            x = self.manual_layer_norm(x, self.ln_out_weight, self.ln_out_bias, 1e-5) 
 
         x = self.head(x)
         return x, state

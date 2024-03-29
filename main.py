@@ -1,7 +1,7 @@
 import time
 import os
 import torch
-from src.layer_norm_model import RWKV_RNN
+from src.model import RWKV_RNN
 #from src.original_model import RWKV_RNN
 from src.sampler import sample_logits
 from src.rwkv_tokenizer import RWKV_TOKENIZER
@@ -11,8 +11,8 @@ if __name__ == '__main__':
     args = {
         'MODEL_NAME': 'RWKV-x060-World-3B-v2-20240228-ctx4096', #模型文件的名字，pth结尾的权重文件。
         'vocab_size': 65536 #词表大小，不要乱改
-        # ,'device': "cpu",
-        ,'device': "musa",
+        ,'device': "cpu",
+        #,'device': "musa",
         "onnx_opset": "18",
     }
 
@@ -41,7 +41,7 @@ if __name__ == '__main__':
         batch_size = 16
     else:
         batch_size = 1
-        
+
     TEMPERATURE = 1  # 温度参数
     TOP_P = 0  # Top-p采样参数
     LENGTH_PER_TRIAL = 100  # 每次试验生成的长度
