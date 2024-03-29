@@ -2,8 +2,7 @@ import time
 import os
 import numpy as np
 import onnxruntime as ort
-#from rwkv_pytorch import RWKV_TOKENIZER
-from rwkv_tokenizer import RWKV_TOKENIZER #切换到速度更快的分词器
+from src.rwkv_tokenizer import RWKV_TOKENIZER #切换到速度更快的分词器
 import numpy as np
 
 def softmax(x, axis=None):
@@ -50,11 +49,11 @@ def sample_logits(out: np.ndarray, temperature: float = 1.0, top_p: float = 0.8)
 if __name__ == '__main__':
     # Load the ONNX model
     print("Loading model and tokenizer...")
-    model_path = './model/rwkv-x060-1b6-world-v2.1-66%trained-20240319-ctx4k.onnx'
+    model_path = './onnx/rwkv-x060-1b6-world-v2.1-66%trained-20240319-ctx4k.onnx'
     session = ort.InferenceSession(model_path)
 
     # Load the tokenizer
-    tokenizer = RWKV_TOKENIZER("rwkv_vocab_v20230424.txt")
+    tokenizer = RWKV_TOKENIZER("./asset/rwkv_vocab_v20230424.txt")
     print("Done.")
     
     # Set the initial string and parameters for inference

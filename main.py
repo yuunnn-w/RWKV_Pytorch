@@ -1,9 +1,9 @@
 import time
 import os
 import torch
-# from rwkv_pytorch import RWKV_RNN, RWKV_TOKENIZER, sample_logits
-from rwkv_pytorch import RWKV_RNN, sample_logits
-from rwkv_tokenizer import RWKV_TOKENIZER
+from src.model import RWKV_RNN
+from src.sampler import sample_logits
+from src.rwkv_tokenizer import RWKV_TOKENIZER
 
 if __name__ == '__main__':
     # 初始化模型参数
@@ -18,7 +18,7 @@ if __name__ == '__main__':
     # 加载模型和分词器
     print("Loading model and tokenizer...")
     model = RWKV_RNN(args)
-    tokenizer = RWKV_TOKENIZER("rwkv_vocab_v20230424.txt")
+    tokenizer = RWKV_TOKENIZER("./asset/rwkv_vocab_v20230424.txt")
     print("Done.")
     
     # 设置续写的初始字符串和参数

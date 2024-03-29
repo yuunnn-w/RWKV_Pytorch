@@ -1,5 +1,5 @@
-from rwkv_pytorch import RWKV_TOKENIZER
-from rwkv_tokenizer import RWKV_TOKENIZER as TRIE_TOKENIZER
+from src.old_tokenizer import RWKV_TOKENIZER
+from src.rwkv_tokenizer import RWKV_TOKENIZER as TRIE_TOKENIZER
 from icecream import ic
 import requests
 
@@ -14,8 +14,8 @@ def timed(f):
     return wrapper
 
 
-tokenizer1 = RWKV_TOKENIZER("rwkv_vocab_v20230424.txt")
-tokenizer2 = TRIE_TOKENIZER("rwkv_vocab_v20230424.txt")
+tokenizer1 = RWKV_TOKENIZER("./asset/rwkv_vocab_v20230424.txt")
+tokenizer2 = TRIE_TOKENIZER("./asset/rwkv_vocab_v20230424.txt")
 
 
 # download the tiny shakespear dataset
