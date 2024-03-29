@@ -50,10 +50,10 @@ This is an inference framework for the RWKV large language model implemented pur
 
 
 ## 已知的问题：
-- **已知op17版本才支持LayerNorm算子，op18版本才支持GroupNorm算子，目前torch的preview版本支持op18，但是无法导出，current版本只支持op17，能够正常导出含LayerNorm算子的模型。目前仓库给出了一个全部用LayerNorm算子去模拟GroupNorm算子的模型，即`rwkv_layer_norm.py`文件，而rwkv_pytorch.py所包含的模型其中的LayerNorm算子已经全部重写来支持更低的op_set版本。**
+- **已知op17版本才支持LayerNorm算子，op18版本才支持GroupNorm算子，目前torch的preview版本支持op18，但是无法导出，current版本只支持op17，能够正常导出含LayerNorm算子的模型。你可以参照main.py 使用opset参数指定**
 
 **Known Issues:** 
-- **LayerNorm operators are supported in op17 version, while GroupNorm operators are supported in op18 version. The current torch preview version supports op18 but cannot be exported. The current version only supports op17 and can export models containing LayerNorm operators. This repository provides a model (`rwkv_layer_norm.py`) that simulates GroupNorm operators using only LayerNorm operators. The models contained in `rwkv_pytorch.py` have all LayerNorm operators rewritten to support lower op_set versions.**
+- **LayerNorm operators are supported in op17 version, while GroupNorm operators are supported in op18 version. The current torch preview version supports op18 but cannot be exported. The current version only supports op17 and can export models containing LayerNorm operators. You can use parameter similar in main.py to support lower op_set versions.**
 
 
 **注意，本框架目前仅支持RWKV v6模型，具体版本号为x060**
