@@ -2,8 +2,8 @@ import argparse
 import os
 import onnx
 from onnxsim import simplify
-from onnx_utils import set_onnx_input_shape
-from compress_model import SIZE_1MB, compress_onnx_model, uncompress_onnx_model
+from src.onnx_utils import set_onnx_input_shape
+from src.compress_model import SIZE_1MB, compress_onnx_model, uncompress_onnx_model
 
 
 def simplify_large_onnx(args):

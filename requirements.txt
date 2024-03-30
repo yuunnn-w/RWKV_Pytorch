@@ -3,3 +3,4 @@ numpy>=1.24.3
 onnxsim>=0.4.36
 onnx>=1.15.0
 onnxruntime>=1.17.1
+icecream
