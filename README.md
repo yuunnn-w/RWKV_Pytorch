@@ -121,6 +121,13 @@ This is an inference framework for the RWKV large language model implemented pur
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/uniartisan">
+            <img src="https://avatars.githubusercontent.com/u/31544054?v=4" width="100;" alt="uniartisan"/>
+            <br />
+            <sub><b>Zhiyuan Li</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/jiamingkong">
             <img src="https://avatars.githubusercontent.com/u/2761215?v=4" width="100;" alt="jiamingkong"/>
             <br />
