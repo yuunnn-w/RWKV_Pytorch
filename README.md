@@ -9,12 +9,14 @@ This is an inference framework for the RWKV large language model implemented pur
 ## 特性
 - **原生pytorch实现！**
 - **支持batch推理！**
+- **支持并行推理！充分发挥RWKV优势！**
 - **代码整洁，容易阅读和二次开发！**
 - **支持导出并推理onnx格式模型！**
 
 **Features**
 - **Native PyTorch implementation!**
 - **Supports batch inference!**
+- **Support parallel inference! Fully leverage the advantages of RWKV!**
 - **Clean codebase, easy to read and extend!**
 - **Supports exporting and inference with ONNX format models!**
 
