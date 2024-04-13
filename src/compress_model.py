@@ -2,8 +2,8 @@ import sys
 import logging
 import json
 import onnx
-from onnx_utils import get_onnx_tensor_proto_dtype, get_onnx_tensor_proto_shape, create_const_of_shape
-from onnx_utils import del_onnx_initializers, insert_onnx_nodes, add_onnx_inits, del_onnx_nodes, shape_elem_num
+from src.onnx_utils import get_onnx_tensor_proto_dtype, get_onnx_tensor_proto_shape, create_const_of_shape
+from src.onnx_utils import del_onnx_initializers, insert_onnx_nodes, add_onnx_inits, del_onnx_nodes, shape_elem_num
 
 SIZE_1MB = 1024 * 1024
 
