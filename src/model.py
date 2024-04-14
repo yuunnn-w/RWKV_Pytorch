@@ -407,7 +407,6 @@ class RWKV_RNN(nn.Module):
 
     def save(self,filepath):
             torch.save(self.w,filepath)
-            
 
     def manual_layer_norm(self, x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
         """
