@@ -405,6 +405,10 @@ class RWKV_RNN(nn.Module):
         self.head = nn.Linear(self.n_embd, args['vocab_size'], bias=False)
         self.head.weight = nn.Parameter(w['head.weight'])
 
+    def save(self,filepath):
+            torch.save(self.w,filepath)
+            
+
     def manual_layer_norm(self, x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
         """
         人工层归一化函数
