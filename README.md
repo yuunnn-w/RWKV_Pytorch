@@ -140,7 +140,10 @@ This is an inference framework for the RWKV large language model implemented pur
 <!-- readme: collaborators,contributors -end -->
 
 ****
+## 技术交流群 (Technical exchange group)
+![QQ交流群](https://github.com/yuunnn-w/RWKV_Pytorch/blob/main/asset/qrcode_1713112204738.jpg)
 
+****
 **感谢各位大佬做出的贡献！欢迎各路大神为本项目提PR和Issue！你们的贡献对本项目十分有价值！！！**
 
 **We warmly invite everyone to contribute to the project by submitting PRs and raising Issues! Your input and contributions are highly valued and play a vital role in improving the project for the entire community. Let's collaborate and make this project even better together!**
