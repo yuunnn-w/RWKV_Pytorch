@@ -50,6 +50,16 @@ This is an inference framework for the RWKV large language model implemented pur
 4. *(Optional)* Simplify the model by running `python simplify_large_onnx.py -m onnx/{model name}.onnx -o ONNX_Simplified/{model name}.onnx`. The simplified model will be stored in the ONNX_Simplified directory.
 5. *(Optional)* Modify the model path parameter in the `onnx_infer.py` file, then run `python onnx_infer.py` to perform inference on the ONNX format model.
 
+## 本地部署体验
+1. 修改`openai_api.py`文件中的模型配置参数。
+2. 执行`python openai_api.py`即可启动后端。
+3. 用任意符合**`OpenAI API`**规范的客户端，填入`http://127.0.0.1:8848`作为`API_URL`参数，即可体验。
+
+**Local Deployment Experience**
+1. Modify the model configuration parameters in the `openai_api.py` file.
+2. Execute `python openai_api.py` to start the backend.
+3. Use any client that conforms to the **OpenAI API** specifications, and fill in `http://127.0.0.1:8848` as the `API_URL` parameter to experience it.
+
 
 ## 已知的问题：
 - **已知op17版本才支持LayerNorm算子，op18版本才支持GroupNorm算子，目前torch的preview版本支持op18，但是无法导出，current版本只支持op17，能够正常导出含LayerNorm算子的模型。你可以参照main.py 使用opset参数指定**
