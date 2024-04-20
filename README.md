@@ -9,22 +9,24 @@ This is an inference framework for the RWKV large language model implemented pur
 ## 特性
 - **原生pytorch实现！**
 - **支持batch推理！**
+- **支持并行推理！充分发挥RWKV优势！**
 - **代码整洁，容易阅读和二次开发！**
 - **支持导出并推理onnx格式模型！**
 
 **Features**
 - **Native PyTorch implementation!**
 - **Supports batch inference!**
+- **Support parallel inference! Fully leverage the advantages of RWKV!**
 - **Clean codebase, easy to read and extend!**
 - **Supports exporting and inference with ONNX format models!**
 
 
 ## 使用方法
 1. 克隆仓库 `git clone -b dev https://github.com/yuunnn-w/RWKV_Pytorch.git`
-2. 执行`cd RWKV_Pytorch`进入仓库目录，执行`pip install -r requirements.txt`安装依赖。
-3. 下载RWKV6模型，官方仓库地址：[BlinkDL/rwkv-6-world](https://huggingface.co/BlinkDL/rwkv-6-world/tree/main)，将模型权重放置在`weight`文件夹中。
-4. 修改main.py 文件的`MODEL_NAME`参数。
-5. 执行`python main.py`，即可看到batch推理效果。
+2. 执行 `cd RWKV_Pytorch` 进入仓库目录，执行 `pip install -r requirements.txt` 安装依赖。
+3. 下载 RWKV6 模型，官方仓库地址：[BlinkDL/rwkv-6-world](https://huggingface.co/BlinkDL/rwkv-6-world/tree/main)，将模型权重放置在`weight`文件夹中。
+4. 修改 `main.py` 文件的 `MODEL_NAME` 参数。
+5. 执行 `python main.py`，即可看到batch推理效果。
 
 **Usage**
 1. Clone the repository: `git clone https://github.com/yuunnn-w/RWKV_Pytorch.git`
@@ -35,11 +37,11 @@ This is an inference framework for the RWKV large language model implemented pur
 
 
 ## 导出onnx方法
-1. 修改`onnx_export.py`文件参数为你想导出的模型。
-2. 执行`python onnx_export.py`即可导出到./onnx路径。
-3. （可选）执行`mkdir ONNX_Simplified`创建一个用于存放简化算子模型的目录。
-4. （可选）执行`python simplify_large_onnx.py -m onnx/{model name}.onnx -o ONNX_Simplified/{model name}.onnx`来简化模型，简化后的模型将存放在ONNX_Simplified目录。
-5. （可选）修改`onnx_infer.py`文件内的模型路径参数，执行`python onnx_infer.py`即可推理onnx格式模型。
+1. 修改 `onnx_export.py` 文件参数为你想导出的模型。
+2. 执行 `python onnx_export.py` 即可导出到./onnx路径。
+3. （可选）执行 `mkdir ONNX_Simplified` 创建一个用于存放简化算子模型的目录。
+4. （可选）执行 `python simplify_large_onnx.py -m onnx/{model name}.onnx -o ONNX_Simplified/{model name}.onnx` 来简化模型，简化后的模型将存放在ONNX_Simplified目录。
+5. （可选）修改 `onnx_infer.py` 文件内的模型路径参数，执行 `python onnx_infer.py` 即可推理onnx格式模型。
 
 **ONNX Export Method**
 1. Modify the parameters in the `onnx_export.py` file to specify the model you want to export.
@@ -47,6 +49,16 @@ This is an inference framework for the RWKV large language model implemented pur
 3. *(Optional)* Create a directory for storing simplified operator models by running `mkdir ONNX_Simplified`.
 4. *(Optional)* Simplify the model by running `python simplify_large_onnx.py -m onnx/{model name}.onnx -o ONNX_Simplified/{model name}.onnx`. The simplified model will be stored in the ONNX_Simplified directory.
 5. *(Optional)* Modify the model path parameter in the `onnx_infer.py` file, then run `python onnx_infer.py` to perform inference on the ONNX format model.
+
+## 本地部署体验
+1. 修改 `openai_api.py` 文件中的模型配置参数。
+2. 执行 `python openai_api.py` 即可启动后端。
+3. 用任意符合 **OpenAI API** 规范的客户端，填入 `http://127.0.0.1:8848` 作为 `API_URL` 参数，即可体验。
+
+**Local Deployment Experience**
+1. Modify the model configuration parameters in the `openai_api.py` file.
+2. Execute `python openai_api.py` to start the backend.
+3. Use any client that conforms to the **OpenAI API** specifications, and fill in `http://127.0.0.1:8848` as the `API_URL` parameter to experience it.
 
 
 ## 已知的问题：
@@ -121,6 +133,13 @@ This is an inference framework for the RWKV large language model implemented pur
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/uniartisan">
+            <img src="https://avatars.githubusercontent.com/u/31544054?v=4" width="100;" alt="uniartisan"/>
+            <br />
+            <sub><b>Zhiyuan Li</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/jiamingkong">
             <img src="https://avatars.githubusercontent.com/u/2761215?v=4" width="100;" alt="jiamingkong"/>
             <br />
@@ -131,7 +150,10 @@ This is an inference framework for the RWKV large language model implemented pur
 <!-- readme: collaborators,contributors -end -->
 
 ****
+## 技术交流群 (Technical exchange group)
+![QQ交流群](https://github.com/yuunnn-w/RWKV_Pytorch/blob/main/asset/qrcode_1713112204738.jpg)
 
+****
 **感谢各位大佬做出的贡献！欢迎各路大神为本项目提PR和Issue！你们的贡献对本项目十分有价值！！！**
 
 **We warmly invite everyone to contribute to the project by submitting PRs and raising Issues! Your input and contributions are highly valued and play a vital role in improving the project for the entire community. Let's collaborate and make this project even better together!**

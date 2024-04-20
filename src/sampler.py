@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-def sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.8) -> torch.Tensor:
+def old_sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.8) -> torch.Tensor:
     """
     对模型输出的logits进行采样。
 
@@ -43,3 +43,49 @@ def sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.
         
 
     return sampled_indices
+
+def sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.8) -> torch.Tensor:
+    """
+    Sample from the logits tensor produced by the model.
+
+    Args:
+        out (torch.Tensor): Logits tensor from the model, shape [* , vocab_size].
+        temperature (float): Temperature parameter for controlling the diversity of sampling. Default is 1.0.
+        top_p (float): Top-p truncation parameter for stabilizing and controlling the sampling probability distribution. Default is 0.8.
+
+    Returns:
+        torch.Tensor: Sampled indices, shape [*].
+    """
+    # Apply temperature scaling
+    scaled_logits = out / temperature
+
+    # Convert logits to probabilities
+    probabilities = torch.softmax(scaled_logits, dim=-1)
+
+    # Sort the probabilities to identify the top-p candidates
+    sorted_probs, sorted_indices = torch.sort(probabilities, descending=True)
+
+    # Compute the cumulative distribution of probabilities
+    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+
+    # Remove tokens with a cumulative probability above the threshold (top_p)
+    sorted_indices_to_remove = cumulative_probs > top_p
+    # Shift the indices to the right to keep the first token above the threshold
+    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+    sorted_indices_to_remove[..., 0] = 0
+
+    # Create a mask for the indices to remove
+    indices_to_remove = sorted_indices_to_remove.scatter(dim=-1, index=sorted_indices, src=sorted_indices_to_remove)
+
+    # Use the mask to zero out probabilities that should be removed
+    probabilities.masked_fill_(indices_to_remove, 0.0)
+
+    # Resample if probabilities are all zero (unlikely but just in case)
+    if torch.all(probabilities == 0):
+        probabilities = torch.ones_like(probabilities)
+        probabilities /= probabilities.sum()
+
+    # Sample from the modified distribution
+    sampled_indices = torch.multinomial(probabilities, 1)
+
+    return sampled_indices.squeeze(-1)
