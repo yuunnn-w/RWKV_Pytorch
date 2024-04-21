@@ -284,7 +284,7 @@ class RWKV_Block(nn.Module):
         a = k @ v # a: [batch_size, L, H, S, S]
         
         for l in range(L-1):
-            s = a[:, l] + w[:, l] * s
+            s = a[:, l] + w[:, l] * s.clone()
             state_s[:, l+1] = s # 循环赋值
             
         s = a[:, -1] + w[:, -1] * s #这里计算出最后一个state的值赋值给传入的state
