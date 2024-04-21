@@ -165,8 +165,11 @@ class RWKV_Block(nn.Module):
         sx_lerp = torch.empty(x.shape, device=x.device)
         sx_lerp[:, 0] = state[:, i0] - x[:, 0]
         
-        for l in range(1, L):
-            sx_lerp[:, l] = x[:, l-1] - x[:, l]
+        # for l in range(1, L):
+        #     sx_lerp[:, l] = x[:, l-1] - x[:, l]
+        # 和上方等同，使用矩阵运算计算差值
+        sx_lerp[:, 1:] = x[:, :-1] - x[:, 1:]
+
         state[:, i0] = x[:, -1] # 这里把state赋值为最后一个输入
 
         xk = x + sx_lerp * self.ffn_time_maa_k
