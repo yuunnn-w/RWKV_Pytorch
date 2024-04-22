@@ -28,10 +28,11 @@ def add_cors_headers(response):
 def init_model():
     # 模型参数配置
     args = {
-        'MODEL_NAME': 'D:/Code/GPT/RWKV_Pytorch/weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096',
+        'MODEL_NAME': './weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096',
         'vocab_size': 65536,
         'device': "cpu",
         'onnx_opset': '18',
+        "parrallel": "False",
     }
     device = args['device']
     assert device in ['cpu', 'cuda', 'musa', 'npu']
@@ -41,12 +42,25 @@ def init_model():
     elif device == "npu":
         import torch_npu
 
+    # try musa/cuda :P
+    try:
+        if torch.cuda.is_available():
+            args['device'] = 'cuda'
+            device = 'cuda'
+        else:
+            import torch_musa
+            if torch.musa.is_available():
+                args['device'] = 'musa'
+                device = 'musa'
+    except:
+        pass
+
     print("Loading model and tokenizer...")
     model = RWKV_RNN(args).to(device)
     tokenizer = RWKV_TOKENIZER("asset/rwkv_vocab_v20230424.txt")
     print("Done")
     print(f"Model name: {args.get('MODEL_NAME').split('/')[-1]}")
-    return model, tokenizer, device
+    return model, tokenizer, device, args
     
 def format_messages_to_prompt(messages):
     formatted_prompt = ""
@@ -88,13 +102,22 @@ def generate_text(prompt, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n
     token = torch.tensor(encoded_input).long().to(device)
     state = torch.zeros(1, model.state_size[0], model.state_size[1]).to(device)
     prompt_tokens = len(encoded_input[0])
+    stop_token = tokenizer.encode(stop)[0]
     
-    with torch.no_grad():
-        token_out, state_out = model.forward_parallel(token, state)
-        
+    if args['parrallel'] == "True":
+        with torch.no_grad():
+            token_out, state_out = model.forward_parallel(token, state)
+            out = token_out[:, -1]
+    else:
+        # 预填充状态
+        token = token.transpose(0, 1).to(device)
+        with torch.no_grad():
+            for t in token:
+                out, state = model.forward(t.unsqueeze(1), state)
+                out = out[:, -1]
     del token
     
-    out = token_out[:, -1]
+    
     completion_tokens = 0
     if_max_token = True
     generated_tokens = ''
@@ -118,6 +141,7 @@ def generate_text(prompt, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n
             
     total_tokens = prompt_tokens + completion_tokens
     usage = {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "total_tokens": total_tokens}
+    clear_cache()
     return generated_tokens, if_max_token, usage
 
 # 生成文本的生成器函数
@@ -127,12 +151,18 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
     state = torch.zeros(1, model.state_size[0], model.state_size[1]).to(device)
     prompt_tokens = len(encoded_input[0])
 
-    with torch.no_grad():
-        token_out, state_out = model.forward_parallel(token, state)
-        
+    if args['parrallel'] == "True":
+        with torch.no_grad():
+            token_out, state_out = model.forward_parallel(token, state)
+            out = token_out[:, -1]
+    else:
+        # 预填充状态
+        token = token.transpose(0, 1).to(device)
+        with torch.no_grad():
+            for t in token:
+                out, state = model.forward(t.unsqueeze(1), state)
+                out = out[:, -1]
     del token
-    
-    out = token_out[:, -1]
     generated_tokens = ''
     completion_tokens = 0
     if_max_token = True
@@ -157,6 +187,7 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
                 }]
             }
             yield f"data: {json.dumps(response)}\n\n"
+            clear_cache()
             break
         else:
             response = {
@@ -181,9 +212,19 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
             }]
         }
         yield f"data: {json.dumps(response)}\n\n"
-        
+    clear_cache()    
     yield "data: [DONE]"         
-            
+
+
+def clear_cache():
+    try:
+        if device == 'cuda':
+            torch.cuda.empty_cache()
+        elif device == 'musa':
+            torch.musa.empty_cache()
+    except:
+        pass
+
 # 处理 OPTIONS 请求
 @app.route('/v1/chat/completions', methods=['OPTIONS'])
 def options_request():
@@ -239,6 +280,6 @@ def create_completion():
         return str(e), 500
 
 if __name__ == '__main__':
-    model, tokenizer, device = init_model()
+    model, tokenizer, device, args = init_model()
     app.run(host='0.0.0.0', port=8848)
 

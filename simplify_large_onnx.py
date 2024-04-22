@@ -39,6 +39,38 @@ def simplify_large_onnx(args):
     save_extern = True if args.save_extern_data else False
     onnx.save(onnx_model, out_model_path, save_as_external_data=save_extern)
 
+    if args.quantize != "none":
+        from optimum.onnxruntime.configuration import AutoQuantizationConfig
+        from optimum.onnxruntime import ORTQuantizer
+    if args.quantize == "avx2":
+        dqconfig = AutoQuantizationConfig.avx2(
+            is_static=False,
+            per_channel=False,
+            use_symmetric_activations=True,  
+        )
+    elif args.quantize == "avx512":
+        dqconfig = AutoQuantizationConfig.avx512(
+            is_static=False,
+            per_channel=False,
+            use_symmetric_activations=True,        
+        )
+    elif args.quantize == "avx512_vnni":
+        dqconfig = AutoQuantizationConfig.avx512_vnni(
+            is_static=False,
+            per_channel=False,
+            use_symmetric_activations=True,            
+        )
+
+    if args.quantize != "none":
+        print("Quantizing the model...", args.quantize)
+        quantizer = ORTQuantizer.from_pretrained(onnx_model)
+
+        model_quantized_path = quantizer.quantize(
+            save_dir=out_model_path.replace(".onnx", args.quantize + ".onnx"),
+            quantization_config=dqconfig,
+            use_external_data_format=save_extern,
+        )
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -50,6 +82,12 @@ if __name__ == "__main__":
     parser.add_argument('--save_extern_data', required=False, type=int, default=1)
     parser.add_argument('--input_shape', required=False, type=str, default="")
     parser.add_argument('--skip', required=False, type=str, default="")
+    parser.add_argument(
+        "--quantize",
+        type=str,
+        default="none",
+        choices=["none", "avx2", "avx512", "avx512_vnni"],
+    )
 
     args = parser.parse_args()
 

@@ -367,7 +367,9 @@ class RWKV_RNN(nn.Module):
         print('onnx opset ', self.onnx_opset)
         self.eval()
         # 加载权重
-        w = torch.load(args['MODEL_NAME'] + '.pth', map_location='cpu')
+        if not args['MODEL_NAME'].endswith('.pth'):
+            args['MODEL_NAME'] += '.pth'
+        w = torch.load(args['MODEL_NAME'], map_location='cpu')
         
         # 将所有权重转换为float32
         self.num_layer = 0
@@ -480,3 +482,53 @@ class RWKV_RNN(nn.Module):
             x = self.manual_layer_norm(x, self.ln_out_weight, self.ln_out_bias, 1e-5) 
         x = self.head(x)
         return x, state
+    
+    def save_model(self, model_path):
+        """
+        将训练后的模型保存为 .pth 文件。
+        Args:
+            model_path (str): 要保存的模型路径。
+        """
+        assert self.onnx_opset >= 18, "onnx_opset must be greater than or equal to 18"
+
+        # 创建一个空字典来存储模型权重
+        state_dict = {}
+
+        # 保存词嵌入层的权重
+        state_dict['emb.weight'] = self.emb.weight.data
+
+        # 保存 RWKV_RNN 的权重
+        for name, param in self.named_parameters():
+            if 'ln0' in name:
+                state_dict[name.replace('ln0.', 'blocks.0.ln0.')] = param.data
+            if 'blocks' not in name:
+                state_dict[name] = param.data
+
+        # 保存 RWKV_Block 的权重
+        for i, block in enumerate(self.blocks):
+            for name, param in block.named_parameters():
+                # 根据名称对权重进行调整
+                if name == 'att_group_norm.weight':
+                    name = 'att.ln_x.weight'
+                elif name == 'att_group_norm.bias':
+                    name = 'att.ln_x.bias'
+                elif name.startswith('att_'):
+                    # 将 'att_' 替换为 'att.'
+                    name = 'att.' + name[4:]
+                elif name.startswith('ffn_'):
+                    name = 'ffn.' + name[4:]
+                if '.time_faaaa' in name:
+                    param_data = param.data
+                elif '.time_' in name:
+                    param_data = param.data.unsqueeze(-1)
+                else:
+                    param_data = param.data
+
+                state_dict[f'blocks.{i}.{name}'] = param_data
+
+        # 保存模型权重到 .pth 文件
+        if not model_path.endswith('.pth'):
+            model_path += '.pth'
+        torch.save(state_dict, model_path)
+        print(f"Model saved as {model_path}")
+            
