@@ -517,9 +517,9 @@ class RWKV_RNN(nn.Module):
                     name = 'att.' + name[4:]
                 elif name.startswith('ffn_'):
                     name = 'ffn.' + name[4:]
-                if '.time_' in name:
-                    param_data = param.data.squeeze()
-                elif '.time_faaaa' in name:
+                if '.time_faaaa' in name:
+                    param_data = param.data
+                elif '.time_' in name:
                     param_data = param.data.unsqueeze(-1)
                 else:
                     param_data = param.data

@@ -49,4 +49,13 @@ if __name__ == '__main__':
         args['MODEL_NAME'] = save_path
         model1 = RWKV_RNN(args).to(device)
         print(model1)
+
+        # 比较两个模型的参数是否相等
+        print("Comparing model parameters...")
+        for param, param1 in zip(model.parameters(), model1.parameters()):
+            if not torch.allclose(param, param1):
+                print("Error: Model parameters are not equal.")
+                break
+        else:
+            print("Model parameters are equal.")
     
