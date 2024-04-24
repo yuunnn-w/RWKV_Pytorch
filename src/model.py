@@ -40,11 +40,11 @@ class RWKV_Block(nn.Module):
 
         # 初始化注意力参数
         self.att_time_maa_x = nn.Parameter(block_w['att.time_maa_x'])
-        self.att_time_maa_w = nn.Parameter(block_w['att.time_maa_w'])
-        self.att_time_maa_k = nn.Parameter(block_w['att.time_maa_k'])
-        self.att_time_maa_v = nn.Parameter(block_w['att.time_maa_v'])
-        self.att_time_maa_r = nn.Parameter(block_w['att.time_maa_r'])
-        self.att_time_maa_g = nn.Parameter(block_w['att.time_maa_g'])
+        # self.att_time_maa_w = nn.Parameter(block_w['att.time_maa_w'])
+        # self.att_time_maa_k = nn.Parameter(block_w['att.time_maa_k'])
+        # self.att_time_maa_v = nn.Parameter(block_w['att.time_maa_v'])
+        # self.att_time_maa_r = nn.Parameter(block_w['att.time_maa_r'])
+        # self.att_time_maa_g = nn.Parameter(block_w['att.time_maa_g'])
         self.att_time_maa_w1 = nn.Parameter(block_w['att.time_maa_w1'])
         self.att_time_maa_w2 = nn.Parameter(block_w['att.time_maa_w2'])
         self.att_time_decay = nn.Parameter(block_w['att.time_decay'])
@@ -66,17 +66,17 @@ class RWKV_Block(nn.Module):
         self.att_stacked_weights = (
             torch.stack(
                 [
-                    self.att_time_maa_k,
-                    self.att_time_maa_w,
-                    self.att_time_maa_v,
-                    self.att_time_maa_r,
-                    self.att_time_maa_g,
+                    block_w['att.time_maa_k'],
+                    block_w['att.time_maa_w'],
+                    block_w['att.time_maa_v'],
+                    block_w['att.time_maa_r'],
+                    block_w['att.time_maa_g'],
                 ],
                 dim=0,
             )
             .unsqueeze(0)
-            
-        ).to(args['device'])  # shape: (1, 1, 5, hidden_size)
+            #.to(args['device'])  # shape: (1, 1, 5, hidden_size)
+        )
 
         if self.onnx_opset >= 18:
             self.att_group_norm = nn.GroupNorm(num_groups=n_head, num_channels=n_embd, eps=1e-5, affine=True)
@@ -532,6 +532,12 @@ class RWKV_RNN(nn.Module):
                     param_data = param.data
 
                 state_dict[f'blocks.{i}.{name}'] = param_data
+
+            # 保存单独的注意力参数
+            for param_idx, param_name in enumerate(['att.time_maa_k', 'att.time_maa_w', 'att.time_maa_v', 'att.time_maa_r', 'att.time_maa_g']):
+                state_dict[f'blocks.{i}.{param_name}'] = block.att_stacked_weights.data[:, 0, param_idx]
+
+
 
         # 保存模型权重到 .pth 文件
         if not model_path.endswith('.pth'):
