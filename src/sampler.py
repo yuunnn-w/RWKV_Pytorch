@@ -59,8 +59,11 @@ def sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.
     # Apply temperature scaling
     scaled_logits = out / temperature
 
+    # Clip the scaled logits to avoid extreme values
+    scaled_logits = torch.clamp(scaled_logits, min=-1e6, max=1e6)
+
     # Convert logits to probabilities
-    probabilities = torch.softmax(scaled_logits, dim=-1)
+    probabilities = torch.nn.functional.softmax(scaled_logits, dim=-1)
 
     # Sort the probabilities to identify the top-p candidates
     sorted_probs, sorted_indices = torch.sort(probabilities, descending=True)

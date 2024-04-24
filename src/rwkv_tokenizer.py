@@ -65,6 +65,8 @@ class RWKV_TOKENIZER():
         for k,v in self.idx2token.items():
             self.token2idx[v] = int(k)
 
+        # 生成的某些 token 的索引值为 0,但是在 idx2token 字典中并没有对应的条目。
+        self.idx2token[0] = b'<unk>'  # 使用一个特殊的字节序列表示未知 token
         self.root = TRIE()
         for t, i in self.token2idx.items():
             _ = self.root.add(t, val=(t, i))
@@ -90,7 +92,7 @@ class RWKV_TOKENIZER():
             return [self.encodeBytes(s.encode("utf-8")) for s in src]
 
     def decode(self, tokens):
-        return [self.decodeBytes(batch).decode('utf-8') for batch in tokens]    
+        return [self.decodeBytes(batch).decode('utf-8', errors='replace') for batch in tokens]
         # try:
         #     return self.decodeBytes(tokens).decode('utf-8')
         # except:
