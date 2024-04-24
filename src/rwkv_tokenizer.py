@@ -83,7 +83,10 @@ class RWKV_TOKENIZER():
         return tokens
 
     def decodeBytes(self, tokens):
-        return b''.join(map(lambda i: self.idx2token[i], tokens))
+        try:
+            return b''.join(map(lambda i: self.idx2token[i], tokens))
+        except:
+            return b'\ufffd'
 
     def encode(self, src):
         if isinstance(src, str):
