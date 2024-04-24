@@ -9,8 +9,8 @@ if __name__ == '__main__':
         'MODEL_NAME': 'weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096', #模型文件的名字，pth结尾的权重文件。
         'vocab_size': 65536, #词表大小
         'device': "cpu", # 运行设备，可选'cpu','cuda','musa','npu'
-        'onnx_opset': '12',
-        "parrallel": "False", # 是否使用并行计算
+        'onnx_opset': '18', # 非必要不要使用 <18 的值，会引起数值不稳定
+        "parrallel": "True", # 是否使用并行计算
     }
     device = args['device']
     assert device in ['cpu','cuda','musa','npu']
