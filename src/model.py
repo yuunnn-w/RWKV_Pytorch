@@ -75,7 +75,7 @@ class RWKV_Block(nn.Module):
                 dim=0,
             )
             .unsqueeze(0)
-            #.to(args['device'])  # shape: (1, 1, 5, hidden_size)
+            .to(args['device'])  # shape: (1, 1, 5, hidden_size)
         )
 
         if self.onnx_opset >= 18:
