@@ -10,6 +10,7 @@ if __name__ == '__main__':
         'vocab_size': 65536, #词表大小
         'device': "cpu", # 运行设备，可选'cpu','cuda','musa','npu'
         'onnx_opset': '12',
+        "parrallel": "False", # 是否使用并行计算
     }
     device = args['device']
     assert device in ['cpu','cuda','musa','npu']
@@ -29,8 +30,8 @@ if __name__ == '__main__':
     
     # 设置续写的初始字符串和参数
     initial_string = "Elon Musk has"
-    batch_size = 3
-    TEMPERATURE = 2.5  # 温度参数
+    batch_size = 30
+    TEMPERATURE = 1.1  # 温度参数
     TOP_P = 0.1  # Top-p采样参数
     LENGTH_PER_TRIAL = 50  # 生成的长度
     
@@ -41,11 +42,19 @@ if __name__ == '__main__':
     # 初始化状态
     state = torch.zeros(batch_size, model.state_size[0], model.state_size[1]).to(device)
     
-    #并行预填充
-    with torch.no_grad():
-        token_out, state_out = model.forward_parallel(token, state)
+    if args['parrallel'] == "True":
+        with torch.no_grad():
+            token_out, state_out = model.forward_parallel(token, state)
+            out = token_out[:, -1] # 取最后一个生成的token
+    else:
+        # 预填充状态
+        token_temp = token.transpose(0, 1).to(device)
+        with torch.no_grad():
+            for t in token_temp:
+                out, state = model.forward(t, state)
 
-    out = token_out[:,-1] # 取最后一个生成的token
+        del token_temp  # 释放内存
+
 
     start_time = time.time() # 开始计时
     
