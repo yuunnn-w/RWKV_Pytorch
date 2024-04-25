@@ -174,7 +174,6 @@ class RWKV_Block(nn.Module):
         Returns:
             torch.Tensor: 混合后的张量，形状与输入的x相同。
         """
-        Batch, L, _ = x.shape
         i0 = (2 + self.head_size) * i + 0
 
         sx_lerp = torch.empty(x.shape, device=x.device)
