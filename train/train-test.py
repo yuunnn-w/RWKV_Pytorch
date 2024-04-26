@@ -80,7 +80,7 @@ tokenizer = RWKV_TOKENIZER("asset/rwkv_vocab_v20230424.txt")
 print("Done.")
 
 file_path = 'data/seq.jsonl'# 替换为你的文本文件路径
-save_path  = "/home/wutianyi/research/测试/rwkv-test-epoch-1.pth"
+save_path  = "./weight/rwkv-test-epoch-1.pth"
 # 设置续写的初始字符串和参数
 optimizer = torch.optim.Adam(model.parameters())
 criterion = nn.CrossEntropyLoss()
