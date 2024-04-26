@@ -1,3 +1,14 @@
+import sys
+import os
+# 获取当前脚本文件的路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
+# 构建 'src' 目录的相对路径
+src_dir = os.path.join(current_dir, '..')
+
+# 将 'src' 目录的绝对路径添加到 Python 模块搜索路径中
+sys.path.append(os.path.abspath(src_dir))
+
 import time
 import torch
 from src.model import RWKV_RNN
@@ -33,12 +44,35 @@ class TextDataset(Dataset):
 
 # 初始化模型参数
 args = {
-    'MODEL_NAME': 'weight/0.1-1/rwkv-final', #模型文件的名字，pth结尾的权重文件。
+    'MODEL_NAME': './weight/0.1-1/rwkv-final', #模型文件的名字，pth结尾的权重文件。
     'vocab_size': 65536 #词表大小，不要乱改
-    # ,'device': "cpu"
-    ,'device': "cuda"
+    ,'device': "cpu"
+    # ,'device': "cuda"
     ,'onnx_opset':18
 }
+device = args['device']
+assert device in ['cpu','cuda','musa','npu']
+
+# 如果是国产硬件，需要 import 插件来 hack pytorch
+if device == "musa":
+    import torch_musa
+elif device == "npu":
+    import torch_npu
+
+# try musa/cuda :P
+try:
+    if torch.cuda.is_available():
+        args['device'] = 'cuda'
+        device = 'cuda'
+    else:
+        import torch_musa
+        if torch.musa.is_available():
+            args['device'] = 'musa'
+            device = 'musa'
+except:
+    pass
+
+
 device = torch.device(args['device'])
 # 加载模型和分词器
 print("Loading model and tokenizer...")
@@ -76,7 +110,10 @@ with torch.autograd.set_detect_anomaly(True):
                 state = state_new.detach_()
                 tbar.set_postfix(loss=loss.item()*梯度放缩比例)
             optimizer.step()
-            torch.cuda.empty_cache()
+            if args['device'] == 'cuda':
+                torch.cuda.empty_cache()
+            elif args['device'] == 'musa':
+                torch.musa.empty_cache()
 
 # 清理 CUDA 缓存
         

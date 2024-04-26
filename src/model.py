@@ -165,8 +165,11 @@ class RWKV_Block(nn.Module):
         sx_lerp = torch.empty(x.shape, device=x.device)
         sx_lerp[:, 0] = state[:, i0] - x[:, 0]
         
-        for l in range(1, L):
-            sx_lerp[:, l] = x[:, l-1] - x[:, l]
+        # for l in range(1, L):
+        #     sx_lerp[:, l] = x[:, l-1] - x[:, l]
+        # 和上方等同，使用矩阵运算计算差值
+        sx_lerp[:, 1:] = x[:, :-1] - x[:, 1:]
+
         state[:, i0] = x[:, -1] # 这里把state赋值为最后一个输入
 
         xk = x + sx_lerp * self.ffn_time_maa_k
@@ -234,6 +237,7 @@ class RWKV_Block(nn.Module):
         # 应用输出层并返回结果
         return self.att_output(x)
 
+    
     def time_mixing_parallel(self, x: torch.Tensor, state: torch.Tensor, i: int) -> torch.Tensor:
         """
         并行处理的时间混合函数。
@@ -251,9 +255,12 @@ class RWKV_Block(nn.Module):
         
         # 计算初始插值
         sx_lerp[:, 0] = state[:, i1] - x[:, 0]
-        # 逐步计算差值并存入结果张量中
-        for l in range(1, L):
-            sx_lerp[:, l] = x[:, l-1] - x[:, l]
+        # # 逐步计算差值并存入结果张量中
+        # for l in range(1, L):
+        #     sx_lerp[:, l] = x[:, l-1] - x[:, l]
+        # 和上方等同，使用矩阵运算计算差值
+        sx_lerp[:, 1:] = x[:, :-1] - x[:, 1:]
+
         state[:, i1] = x[:, -1] # 这里把state赋值为最后一个输入
         
         xxx = x + sx_lerp * self.att_time_maa_x # torch.Size([B, L, 2048])
@@ -278,13 +285,15 @@ class RWKV_Block(nn.Module):
         v = self.att_value(xv).view(batch_size, L, H, 1, S)
         g = self.silu(self.att_gate(xg)) # [10, 100, 2048]
         # 使用注意力机制更新状态
-        state_s = torch.empty(batch_size, L, H, S, S, device=x.device)#初始化state_s的结果张量
         s = state[:, (2+S)*i+2:(2+S)*(i+1)].view(batch_size, H, S, S)
-        state_s[:, 0] = s # 把第一个a_{t-1, j}赋值给state_s
         a = k @ v # a: [batch_size, L, H, S, S]
         
+        state_s = torch.empty(batch_size, L, H, S, S, device=x.device) #初始化state_s的结果张量
+        state_s[:, 0] = s #把第一个a_{t-1, j}赋值给state_s
+        
+        
         for l in range(L-1):
-            s = a[:, l] + w[:, l] * s.clone()
+            s = a[:, l] + w[:, l] * s.clone() #这里计算出state_s的值.clone()
             state_s[:, l+1] = s # 循环赋值
             
         s = a[:, -1] + w[:, -1] * s #这里计算出最后一个state的值赋值给传入的state
@@ -358,7 +367,9 @@ class RWKV_RNN(nn.Module):
         print('onnx opset ', self.onnx_opset)
         self.eval()
         # 加载权重
-        w = torch.load(args['MODEL_NAME'] + '.pth', map_location='cpu')
+        if not args['MODEL_NAME'].endswith('.pth'):
+            args['MODEL_NAME'] += '.pth'
+        w = torch.load(args['MODEL_NAME'], map_location='cpu')
         
         # 将所有权重转换为float32
         self.num_layer = 0
@@ -471,3 +482,53 @@ class RWKV_RNN(nn.Module):
             x = self.manual_layer_norm(x, self.ln_out_weight, self.ln_out_bias, 1e-5) 
         x = self.head(x)
         return x, state
+    
+    def save_model(self, model_path):
+        """
+        将训练后的模型保存为 .pth 文件。
+        Args:
+            model_path (str): 要保存的模型路径。
+        """
+        assert self.onnx_opset >= 18, "onnx_opset must be greater than or equal to 18"
+
+        # 创建一个空字典来存储模型权重
+        state_dict = {}
+
+        # 保存词嵌入层的权重
+        state_dict['emb.weight'] = self.emb.weight.data
+
+        # 保存 RWKV_RNN 的权重
+        for name, param in self.named_parameters():
+            if 'ln0' in name:
+                state_dict[name.replace('ln0.', 'blocks.0.ln0.')] = param.data
+            if 'blocks' not in name:
+                state_dict[name] = param.data
+
+        # 保存 RWKV_Block 的权重
+        for i, block in enumerate(self.blocks):
+            for name, param in block.named_parameters():
+                # 根据名称对权重进行调整
+                if name == 'att_group_norm.weight':
+                    name = 'att.ln_x.weight'
+                elif name == 'att_group_norm.bias':
+                    name = 'att.ln_x.bias'
+                elif name.startswith('att_'):
+                    # 将 'att_' 替换为 'att.'
+                    name = 'att.' + name[4:]
+                elif name.startswith('ffn_'):
+                    name = 'ffn.' + name[4:]
+                if '.time_faaaa' in name:
+                    param_data = param.data
+                elif '.time_' in name:
+                    param_data = param.data.unsqueeze(-1)
+                else:
+                    param_data = param.data
+
+                state_dict[f'blocks.{i}.{name}'] = param_data
+
+        # 保存模型权重到 .pth 文件
+        if not model_path.endswith('.pth'):
+            model_path += '.pth'
+        torch.save(state_dict, model_path)
+        print(f"Model saved as {model_path}")
+            
