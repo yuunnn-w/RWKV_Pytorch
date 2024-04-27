@@ -14,13 +14,13 @@ class RWKV_Block(nn.Module):
         n_embd (int): 嵌入维度。
         n_head (int): 头数。
     """
-    def __init__(self, block_w: dict, n_embd: int, n_head: int, onnx_opset = 16):
+    def __init__(self, block_w: dict, n_embd: int, n_head: int, args: dict, onnx_opset = 16):
         super().__init__()
         self.n_embd = n_embd
         self.n_head = n_head
         self.head_size = n_embd // n_head
         self.onnx_opset = onnx_opset
-        
+
         # 初始化层归一化
         if self.onnx_opset >= 17:
             self.ln1 = nn.LayerNorm(n_embd)
@@ -35,17 +35,16 @@ class RWKV_Block(nn.Module):
             self.ln2_weight = nn.Parameter(block_w['ln2.weight'])
             self.ln2_bias = nn.Parameter(block_w['ln2.bias'])
 
-
         # 初始化激活函数
         self.silu = nn.SiLU(inplace=False)
-        
+
         # 初始化注意力参数
         self.att_time_maa_x = nn.Parameter(block_w['att.time_maa_x'])
-        self.att_time_maa_w = nn.Parameter(block_w['att.time_maa_w'])
-        self.att_time_maa_k = nn.Parameter(block_w['att.time_maa_k'])
-        self.att_time_maa_v = nn.Parameter(block_w['att.time_maa_v'])
-        self.att_time_maa_r = nn.Parameter(block_w['att.time_maa_r'])
-        self.att_time_maa_g = nn.Parameter(block_w['att.time_maa_g'])
+        # self.att_time_maa_w = nn.Parameter(block_w['att.time_maa_w'])
+        # self.att_time_maa_k = nn.Parameter(block_w['att.time_maa_k'])
+        # self.att_time_maa_v = nn.Parameter(block_w['att.time_maa_v'])
+        # self.att_time_maa_r = nn.Parameter(block_w['att.time_maa_r'])
+        # self.att_time_maa_g = nn.Parameter(block_w['att.time_maa_g'])
         self.att_time_maa_w1 = nn.Parameter(block_w['att.time_maa_w1'])
         self.att_time_maa_w2 = nn.Parameter(block_w['att.time_maa_w2'])
         self.att_time_decay = nn.Parameter(block_w['att.time_decay'])
@@ -62,7 +61,23 @@ class RWKV_Block(nn.Module):
         self.att_output.weight = nn.Parameter(block_w['att.output.weight'])
         self.att_gate = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.att_gate.weight = nn.Parameter(block_w['att.gate.weight'])
-        
+
+        # 预先堆叠权重张量
+        self.att_stacked_weights = (
+            torch.stack(
+                [
+                    block_w['att.time_maa_k'],
+                    block_w['att.time_maa_w'],
+                    block_w['att.time_maa_v'],
+                    block_w['att.time_maa_r'],
+                    block_w['att.time_maa_g'],
+                ],
+                dim=0,
+            )
+            .unsqueeze(0)
+            .to(args['device'])  # shape: (1, 1, 5, hidden_size)
+        )
+
         if self.onnx_opset >= 18:
             self.att_group_norm = nn.GroupNorm(num_groups=n_head, num_channels=n_embd, eps=1e-5, affine=True)
             self.att_group_norm.weight = nn.Parameter(block_w['att.ln_x.weight'])
@@ -70,7 +85,7 @@ class RWKV_Block(nn.Module):
         else:
             self.att_group_norm_weight = nn.Parameter(block_w['att.ln_x.weight'])
             self.att_group_norm_bias = nn.Parameter(block_w['att.ln_x.bias'])
-            
+
         # 初始化前馈参数
         self.ffn_time_maa_k = nn.Parameter(block_w['ffn.time_maa_k'])
         self.ffn_time_maa_r = nn.Parameter(block_w['ffn.time_maa_r'])
@@ -98,7 +113,7 @@ class RWKV_Block(nn.Module):
         x_scaled = x_normalized * weight#.unsqueeze(-1) #这里会自动广播对齐
         x_shifted = x_scaled + bias#.unsqueeze(-1)
         return x_shifted
-        
+
     def manual_group_norm(self, x: torch.Tensor, num_groups: int, weight: torch.Tensor, bias: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
         """
         人工组归一化函数。
@@ -159,12 +174,11 @@ class RWKV_Block(nn.Module):
         Returns:
             torch.Tensor: 混合后的张量，形状与输入的x相同。
         """
-        Batch, L, _ = x.shape
         i0 = (2 + self.head_size) * i + 0
-        
+
         sx_lerp = torch.empty(x.shape, device=x.device)
         sx_lerp[:, 0] = state[:, i0] - x[:, 0]
-        
+
         # for l in range(1, L):
         #     sx_lerp[:, l] = x[:, l-1] - x[:, l]
         # 和上方等同，使用矩阵运算计算差值
@@ -201,24 +215,17 @@ class RWKV_Block(nn.Module):
         xxx = x + sx * self.att_time_maa_x
         xxx = torch.tanh(xxx @ self.att_time_maa_w1).view(batch_size, 5, 1, -1)
         xxx = torch.matmul(xxx, self.att_time_maa_w2).view(batch_size, 5, -1)
-        mw, mk, mv, mr, mg = xxx.unbind(dim=1)
 
-        xw = x + sx * (self.att_time_maa_w + mw)
-        xk = x + sx * (self.att_time_maa_k + mk)
-        xv = x + sx * (self.att_time_maa_v + mv)
-        xr = x + sx * (self.att_time_maa_r + mr)
-        xg = x + sx * (self.att_time_maa_g + mg)
+        # 使用广播机制一次性计算
+        x_kwvrg = x.unsqueeze(1) + sx.unsqueeze(1) * (self.att_stacked_weights + xxx)
+        # shape: (batch_size, 5, hidden_size)
 
-        w = (self.att_time_decay + (torch.tanh(xw @ self.att_time_decay_w1) @ self.att_time_decay_w2))
-        
-        # 计算注意力机制的权重
-        w = torch.exp(-torch.exp(w.view(batch_size, H, S, 1)))
-
-        # 计算注意力机制的组件
-        r = self.att_receptance(xr).view(batch_size, H, 1, S)
-        k = self.att_key(xk).view(batch_size, H, S, 1)
-        v = self.att_value(xv).view(batch_size, H, 1, S)
-        g = self.silu(self.att_gate(xg))
+        # 计算 w, r, k, v, g
+        w = torch.exp(-torch.exp((self.att_time_decay + (torch.tanh(x_kwvrg[:, 1] @ self.att_time_decay_w1) @ self.att_time_decay_w2)).view(batch_size, H, S, 1)))
+        r = self.att_receptance(x_kwvrg[:, 3]).view(batch_size, H, 1, S)
+        k = self.att_key(x_kwvrg[:, 0]).view(batch_size, H, S, 1)
+        v = self.att_value(x_kwvrg[:, 2]).view(batch_size, H, 1, S)
+        g = self.silu(self.att_gate(x_kwvrg[:, 4]))
 
         # 使用注意力机制更新状态
         s = state[:, (2+S)*i+2:(2+S)*(i+1), :].view(batch_size, H, S, S)
@@ -233,11 +240,10 @@ class RWKV_Block(nn.Module):
         else:
             x = x.flatten(start_dim=1) 
             x = self.manual_group_norm(x, num_groups=H, weight=self.att_group_norm_weight, bias=self.att_group_norm_bias) * g
-        
+
         # 应用输出层并返回结果
         return self.att_output(x)
 
-    
     def time_mixing_parallel(self, x: torch.Tensor, state: torch.Tensor, i: int) -> torch.Tensor:
         """
         并行处理的时间混合函数。
@@ -252,7 +258,7 @@ class RWKV_Block(nn.Module):
         i1 = (2 + S) * i + 1
         # 初始化结果张量
         sx_lerp = torch.empty(x.shape, device=x.device)
-        
+
         # 计算初始插值
         sx_lerp[:, 0] = state[:, i1] - x[:, 0]
         # # 逐步计算差值并存入结果张量中
@@ -262,43 +268,44 @@ class RWKV_Block(nn.Module):
         sx_lerp[:, 1:] = x[:, :-1] - x[:, 1:]
 
         state[:, i1] = x[:, -1] # 这里把state赋值为最后一个输入
-        
+
         xxx = x + sx_lerp * self.att_time_maa_x # torch.Size([B, L, 2048])
         xxx = torch.tanh(xxx @ self.att_time_maa_w1).view(batch_size, L, 5, 1, -1) # att_time_maa_w1: [2048, 160]
         xxx = torch.matmul(xxx, self.att_time_maa_w2).view(batch_size, L, 5, -1) # [Batch, L, 5, 2048] 
-        # att_time_maa_w2: torch.Size([5, 32, 2048])
-        mw, mk, mv, mr, mg = xxx.unbind(dim=2) # [10, 100, 2048]
         
-        xw = x + sx_lerp * (self.att_time_maa_w + mw) # torch.Size([B, L, 2048])
-        xk = x + sx_lerp * (self.att_time_maa_k + mk)
-        xv = x + sx_lerp * (self.att_time_maa_v + mv)
-        xr = x + sx_lerp * (self.att_time_maa_r + mr)
-        xg = x + sx_lerp * (self.att_time_maa_g + mg)
-        # self.att_time_decay_w1 [2048, 64]
-        w = (self.att_time_decay + (torch.tanh(xw @ self.att_time_decay_w1) @ self.att_time_decay_w2))
-        # 计算注意力机制的权重
-        # 此时w torch.Size([B, L, 2048])
-        w = torch.exp(-torch.exp(w.view(batch_size, L, H, S, 1)))
-        # 计算注意力机制的组件
-        r = self.att_receptance(xr).view(batch_size, L, H, 1, S)
-        k = self.att_key(xk).view(batch_size, L, H, S, 1)
-        v = self.att_value(xv).view(batch_size, L, H, 1, S)
-        g = self.silu(self.att_gate(xg)) # [10, 100, 2048]
+        # att_time_maa_w2: torch.Size([5, 32, 2048])
+        # mw, mk, mv, mr, mg = xxx.unbind(dim=2) # [10, 100, 2048]
+        # xw = x + sx_lerp * (self.att_time_maa_w + mw) # torch.Size([B, L, 2048])
+        # xk = x + sx_lerp * (self.att_time_maa_k + mk)
+        # xv = x + sx_lerp * (self.att_time_maa_v + mv)
+        # xr = x + sx_lerp * (self.att_time_maa_r + mr)
+        # xg = x + sx_lerp * (self.att_time_maa_g + mg)
+
+        # 使用广播机制一次性计算
+        x_kwvrg = x.unsqueeze(2) + sx_lerp.unsqueeze(2) * (self.att_stacked_weights.unsqueeze(0) + xxx)
+        # shape: (batch_size, seq_length, 5, hidden_size)
+        
+        # 计算 w, r, k, v, g
+        w = torch.exp(-torch.exp((self.att_time_decay + (torch.tanh(x_kwvrg[:,:,1] @ self.att_time_decay_w1) @ self.att_time_decay_w2)).view(batch_size, L, H, S, 1)))
+        r = self.att_receptance(x_kwvrg[:,:,3]).view(batch_size, L, H, 1, S)  
+        k = self.att_key(x_kwvrg[:,:,0]).view(batch_size, L, H, S, 1)
+        v = self.att_value(x_kwvrg[:,:,2]).view(batch_size, L, H, 1, S)
+        g = self.silu(self.att_gate(x_kwvrg[:,:,4])) # [B, L, 2048]
+
         # 使用注意力机制更新状态
         s = state[:, (2+S)*i+2:(2+S)*(i+1)].view(batch_size, H, S, S)
         a = k @ v # a: [batch_size, L, H, S, S]
-        
+
         state_s = torch.empty(batch_size, L, H, S, S, device=x.device) #初始化state_s的结果张量
         state_s[:, 0] = s #把第一个a_{t-1, j}赋值给state_s
-        
         
         for l in range(L-1):
             s = a[:, l] + w[:, l] * s.clone() #这里计算出state_s的值.clone()
             state_s[:, l+1] = s # 循环赋值
-            
+
         s = a[:, -1] + w[:, -1] * s #这里计算出最后一个state的值赋值给传入的state
         state[:, (2+S)*i+2:(2+S)*(i+1)] = s.view(batch_size, S, -1)
-        
+
         x = r @ (self.att_time_faaaa * a + state_s)
         # self.att_time_faaaa: [32, 64, 1]
         # x [batch_size, L, H, 1, S]
@@ -312,7 +319,6 @@ class RWKV_Block(nn.Module):
 
         # 应用输出层并返回结果
         return self.att_output(x)
-
 
     def forward(self, x: torch.Tensor, state: torch.Tensor, i: int) -> torch.Tensor:
         """
@@ -331,7 +337,7 @@ class RWKV_Block(nn.Module):
             x = x + self.time_mixing(self.manual_layer_norm(x, self.ln1_weight, self.ln1_bias, 1e-5), state, i)
             x = x + self.channel_mixing(self.manual_layer_norm(x, self.ln2_weight, self.ln2_bias, 1e-5), state, i)
         return x
-        
+
     def forward_parallel(self, x: torch.Tensor, state: torch.Tensor, i: int) -> torch.Tensor:
         """
         模型的并行前向传播。
@@ -349,7 +355,7 @@ class RWKV_Block(nn.Module):
             x = x + self.time_mixing_parallel(self.manual_layer_norm(x, self.ln1_weight, self.ln1_bias, 1e-5), state, i)
             x = x + self.channel_mixing_parallel(self.manual_layer_norm(x, self.ln2_weight, self.ln2_bias, 1e-5), state, i)
         return x
-    
+
 class RWKV_RNN(nn.Module):
     """
     RWKV模型的RNN结构。
@@ -369,7 +375,7 @@ class RWKV_RNN(nn.Module):
         # 加载权重
         if not args['MODEL_NAME'].endswith('.pth'):
             args['MODEL_NAME'] += '.pth'
-        w = torch.load(args['MODEL_NAME'], map_location='cpu')
+        w = torch.load(args['MODEL_NAME'], map_location=args['device'])
         
         # 将所有权重转换为float32
         self.num_layer = 0
@@ -403,7 +409,7 @@ class RWKV_RNN(nn.Module):
         for i in range(self.num_layer):
             # 提取当前块的权重
             block_w = {k[len(f'blocks.{i}.'):]: v for k, v in w.items() if f'blocks.{i}.' in k}
-            self.blocks.append(RWKV_Block(block_w, self.n_embd, self.n_head, self.onnx_opset))
+            self.blocks.append(RWKV_Block(block_w, self.n_embd, self.n_head, self.args, self.onnx_opset))
 
         if self.onnx_opset >= 17:
             self.ln_out = nn.LayerNorm(self.n_embd)
@@ -526,9 +532,14 @@ class RWKV_RNN(nn.Module):
 
                 state_dict[f'blocks.{i}.{name}'] = param_data
 
+            # 保存单独的注意力参数
+            for param_idx, param_name in enumerate(['att.time_maa_k', 'att.time_maa_w', 'att.time_maa_v', 'att.time_maa_r', 'att.time_maa_g']):
+                state_dict[f'blocks.{i}.{param_name}'] = block.att_stacked_weights.data[:, 0, param_idx]
+
+
+
         # 保存模型权重到 .pth 文件
         if not model_path.endswith('.pth'):
             model_path += '.pth'
         torch.save(state_dict, model_path)
         print(f"Model saved as {model_path}")
-            

@@ -113,8 +113,8 @@ def generate_text(prompt, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n
         token = token.transpose(0, 1).to(device)
         with torch.no_grad():
             for t in token:
-                out, state = model.forward(t.unsqueeze(1), state)
-                out = out[:, -1]
+                out, state = model.forward(t, state)
+
     del token
     
     
