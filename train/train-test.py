@@ -16,34 +16,33 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import json
+import linecache
+
 class TextDataset(Dataset):
-    def __init__(self, file_path,tokenizer):
-        """
-        Args:
-            x (list[list[int]]): 预处理后的文本数据，每个样本是一个由单词索引组成的列表。
-            y (list[list[int]]): 预处理后的文本数据，每个样本是一个由单词索引组成的列表。
-        """
-        data_all = []
+    def __init__(self, file_path, tokenizer):
+        self.file_path = file_path
+        self.tokenizer = tokenizer
+        
         with open(file_path, "r") as file:
-            for line in file:
-                data = json.loads(line)
-                texts=data["text"]
-                data_all.append([tokenizer.encode(texts)[0]+[0]][0])
-        self.data_all = data_all
+            self.total_lines = sum(1 for _ in file)
 
     def __len__(self):
-        return len(self.data_all)
+        return self.total_lines
 
     def __getitem__(self, idx):
-        data = torch.tensor(self.data_all[idx],dtype=int).long().to(device)
-        x=data[:-1].unsqueeze(0)
-        y=data[1:].unsqueeze(0)
-        return x,y
+        line = linecache.getline(self.file_path, idx + 1)
+        data = json.loads(line)
+        texts = data["text"]
+        encoded_data = [self.tokenizer.encode(texts)[0] + [0]][0]
+        
+        encoded_data = torch.tensor(encoded_data, dtype=int).long()
+        x = encoded_data[:-1].unsqueeze(0)
+        y = encoded_data[1:].unsqueeze(0)
+        return x, y
     
-
 # 初始化模型参数
 args = {
-    'MODEL_NAME': './weight/0.1-1/rwkv-final', #模型文件的名字，pth结尾的权重文件。
+    'MODEL_NAME': './weight/ttt', #模型文件的名字，pth结尾的权重文件。
     'vocab_size': 65536 #词表大小，不要乱改
     ,'device': "cpu"
     # ,'device': "cuda"
@@ -85,34 +84,39 @@ save_path  = "./weight/rwkv-test-epoch-1.pth"
 optimizer = torch.optim.Adam(model.parameters())
 criterion = nn.CrossEntropyLoss()
 分段长度=128
-dataset = TextDataset(file_path,tokenizer)
-dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
-# with torch.autograd.set_detect_anomaly(True):
-with tqdm(dataloader) as tbar:
-    for x,y in tbar:
-        x=x[0]
-        y=y[0]
-        data_len=x.shape[1]
-        state = torch.zeros(1, model.state_size[0], model.state_size[1]).to(device)
-        梯度放缩比例=data_len/分段长度
-        optimizer.zero_grad()
-        for i in range((data_len-2)//分段长度+1):
-            start=i*分段长度
-            end=min((i+1)*分段长度,data_len-1)
-            x_i=x[:,start:end]
-            y_i=y[0,start:end]
-            长度权重=x_i.shape[1]/data_len
-            token_out, state_new=model.forward_parallel(x_i,state)
-            loss=长度权重*criterion(token_out[0],y_i)
-            # loss=loss/梯度放缩比例
-            loss.backward()
-            state = state_new.detach_()
-        tbar.set_postfix(loss=loss.item())
-        # loss.backward()
-        optimizer.step()
-            # if args['device'] == 'cuda':
-            #     torch.cuda.empty_cache()
-            # elif args['device'] == 'musa':
-            #     torch.musa.empty_cache()
+dataset = TextDataset(file_path, tokenizer)
+dataloader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=4)
+accumulation_steps = 10 # 每 10 步更新一次参数
+epochs = 1
+
+# with torch.autograd.set_detect_anomaly(True): # 检测梯度异常
+for epoch in range(epochs):
+    with tqdm(dataloader) as tbar:
+        for x,y in tbar:
+            x=x[0]
+            y=y[0]
+            data_len=x.shape[1]
+            state = torch.zeros(1, model.state_size[0], model.state_size[1]).to(device)
+            梯度放缩比例=data_len/分段长度
+            optimizer.zero_grad()
+            for i in range((data_len-2)//分段长度+1):
+                start=i*分段长度
+                end=min((i+1)*分段长度,data_len-1)
+                x_i=x[:,start:end]
+                y_i=y[0,start:end]
+                长度权重=x_i.shape[1]/data_len
+                token_out, state_new=model.forward_parallel(x_i,state)
+                state = state_new.detach()  # 使用 detach() 截断梯度传播
+                loss=长度权重*criterion(token_out[0],y_i)
+                # loss=loss/梯度放缩比例
+                loss.backward()
+
+            
+            # loss.backward()
+            if i % accumulation_steps == 0:
+                optimizer.step()
+                optimizer.zero_grad()
+
+            tbar.set_postfix(loss=loss.item())
 
 model.save_model(save_path)
