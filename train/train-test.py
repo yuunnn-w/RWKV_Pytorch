@@ -11,6 +11,7 @@ sys.path.append(os.path.abspath(src_dir))
 
 import torch
 from src.model import RWKV_RNN
+from src.model_utils import device_checker
 from src.rwkv_tokenizer import RWKV_TOKENIZER
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
@@ -48,27 +49,9 @@ args = {
     # ,'device': "cuda"
     ,'onnx_opset':18
 }
+args = device_checker(args)
 device = args['device']
-assert device in ['cpu','cuda','musa','npu']
-
-# 如果是国产硬件，需要 import 插件来 hack pytorch
-if device == "musa":
-    import torch_musa
-elif device == "npu":
-    import torch_npu
-
-# try musa/cuda :P
-try:
-    if torch.cuda.is_available():
-        args['device'] = 'cuda'
-        device = 'cuda'
-    else:
-        import torch_musa
-        if torch.musa.is_available():
-            args['device'] = 'musa'
-            device = 'musa'
-except:
-    pass
+assert device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
 
 
 device = torch.device(args['device'])

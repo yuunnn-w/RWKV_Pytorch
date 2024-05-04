@@ -218,3 +218,36 @@ class RWKV_x060(nn.Module):
         
         # print('model params', n_params)
         gc.collect()
+
+
+
+# 从 NVIDIA，MUSA，XPU，NPU 等依次枚举
+def device_checker(args):
+    if torch.cuda.is_available():
+        args['device'] = 'cuda'
+        return args
+    
+    else:
+        try:
+            import torch_musa
+            if torch.musa.is_available():
+                args['device'] = 'musa'
+                return args
+        except:
+            pass
+        try:
+            import intel_extension_for_pytorch as ipex
+            if torch.xpu.is_available():
+                args['device'] = 'xpu'
+                return args
+        except:
+            pass
+        try:
+            import torch_npu
+            if torch.npu.is_available():
+                args['device'] = 'npu'
+                return args
+        except:
+            pass
+
+    return args

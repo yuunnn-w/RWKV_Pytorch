@@ -10,7 +10,7 @@ src_dir = os.path.join(current_dir, '..')
 sys.path.append(os.path.abspath(src_dir))
 import torch
 from src.model import RWKV_RNN
-
+from src.model_utils import device_checker
 from src.sampler import sample_logits
 from src.rwkv_tokenizer import RWKV_TOKENIZER
 
@@ -29,14 +29,9 @@ if __name__ == '__main__':
         }
 
 
+        args = device_checker(args)
         device = args['device']
-        assert device in ['cpu','cuda','musa','npu']
-
-        # 如果是国产硬件，需要 import 插件来 hack pytorch
-        if device == "musa":
-            import torch_musa
-        elif device == "npu":
-            import torch_npu
+        assert device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
     
         # 加载模型和分词器
         print("Loading model and tokenizer...")
