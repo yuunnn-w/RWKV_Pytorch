@@ -36,7 +36,7 @@ class TextDataset(Dataset):
         texts = data["text"]
         encoded_data = [self.tokenizer.encode(texts)[0] + [0]][0]
         
-        encoded_data = torch.tensor(encoded_data, dtype=int).long()
+        encoded_data = torch.tensor(encoded_data, dtype=int).long().to(device)
         x = encoded_data[:-1].unsqueeze(0)
         y = encoded_data[1:].unsqueeze(0)
         return x, y

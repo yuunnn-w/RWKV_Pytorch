@@ -251,3 +251,9 @@ def device_checker(args):
             pass
 
     return args
+
+def device_specific_empty_cache(args):
+    pass
+
+def device_specific_model_compile(args):
+    pass
