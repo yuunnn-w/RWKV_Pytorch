@@ -401,7 +401,9 @@ class RWKV_RNN(nn.Module):
         assert 'head_size_divisor' in self.args
 
         model_init = RWKV_x060(self.args)
+        # 使用初始化的权重加载模型
         self.load_params(load_from_file=False, w=model_init.state_dict())
+        del model_init
         import gc
         gc.collect()
 
