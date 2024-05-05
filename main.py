@@ -2,6 +2,7 @@ import time
 import os
 import torch
 from src.model import RWKV_RNN
+from src.model_utils import device_checker
 from src.sampler import sample_logits
 from src.rwkv_tokenizer import RWKV_TOKENIZER
 if __name__ == '__main__':
@@ -12,14 +13,11 @@ if __name__ == '__main__':
         'onnx_opset': '18', # 非必要不要使用 <18 的值，会引起数值不稳定
         "parrallel": "True", # 是否使用并行计算
     }
-    device = args['device']
-    assert device in ['cpu','cuda','musa','npu']
     
-    # 如果是国产硬件，需要 import 插件来 hack pytorch
-    if device == "musa":
-        import torch_musa
-    elif device == "npu":
-        import torch_npu
+    
+    args = device_checker(args)
+    device = args['device']
+    assert device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
     
     # 加载模型和分词器
     print("Loading model and tokenizer...")

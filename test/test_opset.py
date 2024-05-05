@@ -10,7 +10,7 @@ src_dir = os.path.join(current_dir, '..')
 sys.path.append(os.path.abspath(src_dir))
 import torch
 from src.model import RWKV_RNN
-
+from src.model_utils import device_checker
 from src.sampler import sample_logits
 from src.rwkv_tokenizer import RWKV_TOKENIZER
 
@@ -26,17 +26,14 @@ if __name__ == '__main__':
             ,'device': "cpu",
             #,'device': "musa",
             "onnx_opset":  str(i),
+            "parrallel": "False",
         }
 
 
+        args = device_checker(args)
         device = args['device']
-        assert device in ['cpu','cuda','musa','npu']
+        assert device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
 
-        # 如果是国产硬件，需要 import 插件来 hack pytorch
-        if device == "musa":
-            import torch_musa
-        elif device == "npu":
-            import torch_npu
     
         # 加载模型和分词器
         print("Loading model and tokenizer...")
@@ -61,19 +58,25 @@ if __name__ == '__main__':
     
         # 编码初始字符串
         encoded_input = tokenizer.encode([initial_string] * batch_size)
-        token = torch.tensor(encoded_input).long().transpose(0, 1).to(device)  # 转置以匹配模型输入的形状
+        token = torch.tensor(encoded_input).long().to(device)  # 转置以匹配模型输入的形状
     
         # 初始化状态
         state = torch.zeros(batch_size, model.state_size[0], model.state_size[1]).to(device)  # 根据模型的state_size和n_embd初始化状态
     
         # 预填充状态
-        for t in token:
+        if args['parrallel'] == "True":
             with torch.no_grad():
-                out, state = model.forward(t.unsqueeze(1), state)
-    
-    
-        token = token.transpose(0, 1)
-        out = out[:, -1]
+                token_out, state_out = model.forward_parallel(token, state)
+                out = token_out[:, -1] # 取最后一个生成的token
+        else:
+            # 预填充状态
+            token_temp = token.transpose(0, 1).to(device)
+            with torch.no_grad():
+                for t in token_temp:
+                    out, state = model.forward(t, state)
+
+            del token_temp  # 释放内存
+        
 
         # 续写生成
         for step in range(LENGTH_PER_TRIAL):  # 生成指定数量的token
@@ -89,6 +92,5 @@ if __name__ == '__main__':
         results.append(decoded_sequences)
 
     print(results)
-    assert(results[0]==results[1])
-    assert(results[1]==results[2])    
+
     

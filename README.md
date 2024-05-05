@@ -1,8 +1,12 @@
 # RWKV_Pytorch
 
-这是一个用纯Pytorch原生实现的RWKV大语言模型的推理框架，官方的原生实现过于复杂且无法拓展生态，让我们加入灵活的Pytorch阵营，一起开源起来吧！
+RWKV_Pytorch是一个用纯Pytorch实现的RWKV大语言模型推理框架。该项目旨在为RWKV x060模型提供一个灵活、易于扩展的Pytorch实现，同时支持多种功能，如批量推理、并行推理、ONNX格式导出、单机训练等。如果你对纯粹的 Pytorch 实现感兴趣，欢迎你加入我们 :)
 
-This is an inference framework for the RWKV large language model implemented purely in native PyTorch. The official native implementation is overly complex and lacks extensibility. Let's join the flexible PyTorch ecosystem and open-source it together!
+RWKV_Pytorch is a RWKV large language model inference framework implemented in pure Pytorch. This project aims to provide a flexible and easily scalable Pytorch implementation for the RWKV x060 model, while supporting a variety of functions, such as batch inference, parallel inference, ONNX format export, stand-alone training, etc. Let's join the flexible PyTorch ecosystem and open-source it together!
+
+我们非常乐于支持各种硬件设备，包括但不限于 NVIDIA 显卡，INTEL 显卡，AMD 显卡，摩尔线程 MUSA 显卡， 华为昇腾 NPU 等。如果你有想支持的设备，欢迎贡献你的代码。
+
+We are very happy to support various hardware devices, including but not limited to NVIDIA graphics cards, INTEL graphics cards, AMD graphics cards, Moore thread MUSA graphics cards, Huawei Ascend NPU, etc. If you have a device you want to support, you are welcome to contribute your code.
 
 ****
 
@@ -12,6 +16,7 @@ This is an inference framework for the RWKV large language model implemented pur
 - **支持并行推理！充分发挥RWKV优势！**
 - **代码整洁，容易阅读和二次开发！**
 - **支持导出并推理onnx格式模型！**
+- **简单的单机训练**
 
 **Features**
 - **Native PyTorch implementation!**
@@ -19,6 +24,7 @@ This is an inference framework for the RWKV large language model implemented pur
 - **Support parallel inference! Fully leverage the advantages of RWKV!**
 - **Clean codebase, easy to read and extend!**
 - **Supports exporting and inference with ONNX format models!**
+- **stand-alone training**
 
 
 ## 使用方法

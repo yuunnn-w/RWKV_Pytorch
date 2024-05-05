@@ -1,8 +1,17 @@
+import os
+import sys
+# 获取当前脚本文件的路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# 构建 'src' 目录的相对路径
+src_dir = os.path.join(current_dir, '..')
+# 将 'src' 目录的绝对路径添加到 Python 模块搜索路径中
+sys.path.append(os.path.abspath(src_dir))
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from typing import Tuple
+from .model_utils import RWKV_x060
 
 
 class RWKV_Block(nn.Module):
@@ -367,15 +376,45 @@ class RWKV_RNN(nn.Module):
         super().__init__()
         self.args = args
         try:
-            self.onnx_opset = int(args['onnx_opset'])
+            self.onnx_opset = int(self.args['onnx_opset'])
         except:
             self.onnx_opset = 16 #默认是最低的，op17版本才支持LayerNorm算子，op18版本才支持GroupNorm算子
         print('onnx opset ', self.onnx_opset)
-        self.eval()
+        
         # 加载权重
-        if not args['MODEL_NAME'].endswith('.pth'):
-            args['MODEL_NAME'] += '.pth'
-        w = torch.load(args['MODEL_NAME'], map_location=args['device'])
+        if 'init_model' in self.args and self.args['init_model'] == True:
+            self.init_params()
+        else:
+            self.load_params()
+        
+        self.eval()
+        
+        
+
+    def init_params(self):
+        # 检查参数是否都存在
+        assert 'n_embd' in self.args
+        assert 'n_layer' in self.args
+        assert 'vocab_size' in self.args
+        assert 'ctx_len' in self.args
+        assert 'head_size_a' in self.args
+        assert 'head_size_divisor' in self.args
+
+        model_init = RWKV_x060(self.args)
+        # 使用初始化的权重加载模型
+        self.load_params(load_from_file=False, w=model_init.state_dict())
+        del model_init
+        import gc
+        gc.collect()
+
+
+    def load_params(self, load_from_file: bool = True, w: dict = None):
+        if load_from_file:
+            if not self.args['MODEL_NAME'].endswith('.pth'):
+                self.args['MODEL_NAME'] += '.pth'
+            w = torch.load(self.args['MODEL_NAME'], map_location=self.args['device'])
+        else:
+            assert w is not None
         
         # 将所有权重转换为float32
         self.num_layer = 0
@@ -419,7 +458,7 @@ class RWKV_RNN(nn.Module):
             self.ln_out_weight = nn.Parameter(w['ln_out.weight'])
             self.ln_out_bias = nn.Parameter(w['ln_out.bias'])
         
-        self.head = nn.Linear(self.n_embd, args['vocab_size'], bias=False)
+        self.head = nn.Linear(self.n_embd, self.args['vocab_size'], bias=False)
         self.head.weight = nn.Parameter(w['head.weight'])
 
     def manual_layer_norm(self, x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
