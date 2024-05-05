@@ -6,6 +6,7 @@
 ###############################################################
 from flask import Flask, request, Response, jsonify
 from src.model import RWKV_RNN
+from src.model_utils import device_checker
 from src.sampler import sample_logits
 from src.rwkv_tokenizer import RWKV_TOKENIZER
 import torch
@@ -34,26 +35,10 @@ def init_model():
         'onnx_opset': '18',
         "parrallel": "False",
     }
+    args = device_checker(args)
     device = args['device']
-    assert device in ['cpu', 'cuda', 'musa', 'npu']
+    assert device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
 
-    if device == "musa":
-        import torch_musa
-    elif device == "npu":
-        import torch_npu
-
-    # try musa/cuda :P
-    try:
-        if torch.cuda.is_available():
-            args['device'] = 'cuda'
-            device = 'cuda'
-        else:
-            import torch_musa
-            if torch.musa.is_available():
-                args['device'] = 'musa'
-                device = 'musa'
-    except:
-        pass
 
     print("Loading model and tokenizer...")
     model = RWKV_RNN(args).to(device)

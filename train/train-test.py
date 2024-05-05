@@ -1,28 +1,29 @@
-import sys
 import os
+import sys
 # 获取当前脚本文件的路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
-
 # 构建 'src' 目录的相对路径
 src_dir = os.path.join(current_dir, '..')
-
 # 将 'src' 目录的绝对路径添加到 Python 模块搜索路径中
 sys.path.append(os.path.abspath(src_dir))
-
-import torch
-from src.model import RWKV_RNN
-from src.rwkv_tokenizer import RWKV_TOKENIZER
-import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-from tqdm import tqdm
-import json
 import linecache
+import json
+from tqdm import tqdm
+from torch.utils.data import Dataset, DataLoader
+import torch.nn as nn
+from src.rwkv_tokenizer import RWKV_TOKENIZER
+from src.model_utils import device_checker
+from src.model import RWKV_RNN
+import torch
+
+
+
 
 class TextDataset(Dataset):
     def __init__(self, file_path, tokenizer):
         self.file_path = file_path
         self.tokenizer = tokenizer
-        
+
         with open(file_path, "r") as file:
             self.total_lines = sum(1 for _ in file)
 
@@ -34,41 +35,24 @@ class TextDataset(Dataset):
         data = json.loads(line)
         texts = data["text"]
         encoded_data = [self.tokenizer.encode(texts)[0] + [0]][0]
-        
-        encoded_data = torch.tensor(encoded_data, dtype=int).long()
+
+        encoded_data = torch.tensor(encoded_data, dtype=int).long().to(device)
         x = encoded_data[:-1].unsqueeze(0)
         y = encoded_data[1:].unsqueeze(0)
         return x, y
-    
+
+
 # 初始化模型参数
 args = {
-    'MODEL_NAME': './weight/ttt', #模型文件的名字，pth结尾的权重文件。
-    'vocab_size': 65536 #词表大小，不要乱改
-    ,'device': "cpu"
-    # ,'device': "cuda"
-    ,'onnx_opset':18
+    # 模型文件的名字，pth结尾的权重文件。
+    'MODEL_NAME': './weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth',
+    'vocab_size': 65536  # 词表大小，不要乱改
+    , 'device': "cpu"    # ,'device': "cuda"
+    , 'onnx_opset': 18
 }
+args = device_checker(args)
 device = args['device']
-assert device in ['cpu','cuda','musa','npu']
-
-# 如果是国产硬件，需要 import 插件来 hack pytorch
-if device == "musa":
-    import torch_musa
-elif device == "npu":
-    import torch_npu
-
-# try musa/cuda :P
-try:
-    if torch.cuda.is_available():
-        args['device'] = 'cuda'
-        device = 'cuda'
-    else:
-        import torch_musa
-        if torch.musa.is_available():
-            args['device'] = 'musa'
-            device = 'musa'
-except:
-    pass
+assert device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
 
 
 device = torch.device(args['device'])
@@ -78,45 +62,50 @@ model = RWKV_RNN(args).to(device)
 tokenizer = RWKV_TOKENIZER("asset/rwkv_vocab_v20230424.txt")
 print("Done.")
 
-file_path = 'data/seq.jsonl'# 替换为你的文本文件路径
-save_path  = "./weight/rwkv-test-epoch-1.pth"
+file_path = 'data/seq.jsonl'  # 替换为你的文本文件路径
+save_path = "./weight/rwkv-test-epoch-1.pth"
 # 设置续写的初始字符串和参数
 optimizer = torch.optim.Adam(model.parameters())
 criterion = nn.CrossEntropyLoss()
-分段长度=128
+slice_len = 128
 dataset = TextDataset(file_path, tokenizer)
 dataloader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=4)
-accumulation_steps = 10 # 每 10 步更新一次参数
+accumulation_steps = 10  # 每 10 步更新一次参数
 epochs = 1
 
 # with torch.autograd.set_detect_anomaly(True): # 检测梯度异常
 for epoch in range(epochs):
+    optimizer.zero_grad()
     with tqdm(dataloader) as tbar:
-        for x,y in tbar:
-            x=x[0]
-            y=y[0]
-            data_len=x.shape[1]
-            state = torch.zeros(1, model.state_size[0], model.state_size[1]).to(device)
-            梯度放缩比例=data_len/分段长度
+        for step, (x, y) in enumerate(tbar, start=1):
+            x = x[0]
+            y = y[0]
+            data_len = x.shape[1]
+            state = torch.zeros(
+                1, model.state_size[0], model.state_size[1]).to(device)
             optimizer.zero_grad()
-            for i in range((data_len-2)//分段长度+1):
-                start=i*分段长度
-                end=min((i+1)*分段长度,data_len-1)
-                x_i=x[:,start:end]
-                y_i=y[0,start:end]
-                长度权重=x_i.shape[1]/data_len
-                token_out, state_new=model.forward_parallel(x_i,state)
+            for i in range((data_len-2)//slice_len+1):
+                start = i*slice_len
+                end = min((i+1)*slice_len, data_len-1)
+                x_i = x[:, start:end]
+                y_i = y[0, start:end]
+                current_slice_len = x_i.shape[1]
+                token_out, state_new = model.forward_parallel(x_i, state)
                 state = state_new.detach()  # 使用 detach() 截断梯度传播
-                loss=长度权重*criterion(token_out[0],y_i)
-                # loss=loss/梯度放缩比例
-                loss.backward()
+                loss = criterion(token_out[0], y_i)
+                loss_weight = loss * (current_slice_len / data_len)
+                loss_weight.backward()
 
-            
-            # loss.backward()
-            if i % accumulation_steps == 0:
+            # 根据序列的总长度对梯度进行规范化
+            for param in model.parameters():
+                if param.grad is not None:
+                    param.grad /= data_len
+
+            if step % accumulation_steps == 0:
                 optimizer.step()
                 optimizer.zero_grad()
 
             tbar.set_postfix(loss=loss.item())
+
 
 model.save_model(save_path)
