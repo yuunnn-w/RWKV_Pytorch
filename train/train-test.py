@@ -112,6 +112,8 @@ for epoch in range(epochs):
             if step % accumulation_steps == 0 or step == len(dataloader):
                 optimizer.step()
                 optimizer.zero_grad()
+                累积总长=0
+                上一步累积总长=0
 
             tbar.set_postfix(avg_loss=accumulated_loss)
 
