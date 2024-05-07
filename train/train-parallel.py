@@ -73,19 +73,22 @@ def main(args:ModelArgs):
         x = y = torch.tensor([0])
         dataloader = [(x,y)] * datasize
     model.train()
+    def boardcast_iter(x, y):
+        if args.prev_id is None:
+            num_tok = torch.tensor([len(x)]).cuda()
+            dist.broadcast(num_tok,0)
+        else:
+            num_tok = torch.tensor([0]).cuda()
+            dist.broadcast(num_tok,0)
+            x = y = torch.zeros((num_tok,)).long().cuda()
+        dist.broadcast(y, 0)
+        return x,y
     with torch.autograd.set_detect_anomaly(True):
         with tqdm(dataloader,disable=(args.rank_id != 0)) as tbar:
             for x,y in tbar:
                 x=x[0].cuda()
                 y=y[0].cuda()
-                if args.prev_id is None:
-                    num_tok = torch.tensor([len(x)]).cuda()
-                    dist.broadcast(num_tok,0)
-                else:
-                    num_tok = torch.tensor([0]).cuda()
-                    dist.broadcast(num_tok,0)
-                    x = y = torch.zeros((num_tok,)).long().cuda()
-                dist.broadcast(y, 0)
+                x,y = boardcast_iter(x,y)
                 optimizer.zero_grad()
                 loss = wrapper.train_with_interleaving(x,y,criterion)
                 if loss is not None:
@@ -96,7 +99,7 @@ def main(args:ModelArgs):
                 elif args.device == 'musa':
                     torch.musa.empty_cache()
 
-    # 清理 CUDA 缓存
+    # 同步GPU执行位置
     torch.cuda.synchronize()
     end_time = time.time()
     # 计算并打印程序运行时间
@@ -139,7 +142,6 @@ if __name__ == '__main__':
                 args.device = 'cuda'
             else:
                 import torch_musa
-
                 if torch.musa.is_available():
                     args.device = 'musa'
         except:
