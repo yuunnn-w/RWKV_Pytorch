@@ -1,17 +1,25 @@
-import os
-import sys
-# 获取当前脚本文件的路径
-current_dir = os.path.dirname(os.path.abspath(__file__))
-# 构建 'src' 目录的相对路径
-src_dir = os.path.join(current_dir, '..')
-# 将 'src' 目录的绝对路径添加到 Python 模块搜索路径中
-sys.path.append(os.path.abspath(src_dir))
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Tuple
-from .model_utils import RWKV_x060
+from typing import Tuple,Dict
+from simple_parsing.helpers import Serializable
+from dataclasses import dataclass
+
+@dataclass
+class ModelArgs(Serializable):
+    MODEL_NAME: str = './weight/0.1-1/rwkv-final'
+    DATASET_PATH: str = '/home/aknife/code/mistral-src-main/data/medical_dialog_test.jsonl'
+    TOKENIZER_PATH: str = "asset/rwkv_vocab_v20230424.txt"
+    device: str = 'cuda'
+    vocab_size: int = 65536
+    prev_id: int = None
+    rank_id: int = None
+    next_id: int = None
+    world_size: int = None
+    batch_size: int = 4
+    token_limit: int = 128
+    onnx_opset: int = 18
 
 
 class RWKV_Block(nn.Module):
@@ -23,7 +31,7 @@ class RWKV_Block(nn.Module):
         n_embd (int): 嵌入维度。
         n_head (int): 头数。
     """
-    def __init__(self, block_w: dict, n_embd: int, n_head: int, args: dict, onnx_opset = 16):
+    def __init__(self, block_w: dict, n_embd: int, n_head: int, onnx_opset = 16):
         super().__init__()
         self.n_embd = n_embd
         self.n_head = n_head
@@ -44,16 +52,17 @@ class RWKV_Block(nn.Module):
             self.ln2_weight = nn.Parameter(block_w['ln2.weight'])
             self.ln2_bias = nn.Parameter(block_w['ln2.bias'])
 
+
         # 初始化激活函数
         self.silu = nn.SiLU(inplace=False)
 
         # 初始化注意力参数
         self.att_time_maa_x = nn.Parameter(block_w['att.time_maa_x'])
-        # self.att_time_maa_w = nn.Parameter(block_w['att.time_maa_w'])
-        # self.att_time_maa_k = nn.Parameter(block_w['att.time_maa_k'])
-        # self.att_time_maa_v = nn.Parameter(block_w['att.time_maa_v'])
-        # self.att_time_maa_r = nn.Parameter(block_w['att.time_maa_r'])
-        # self.att_time_maa_g = nn.Parameter(block_w['att.time_maa_g'])
+        self.att_time_maa_w = nn.Parameter(block_w['att.time_maa_w'])
+        self.att_time_maa_k = nn.Parameter(block_w['att.time_maa_k'])
+        self.att_time_maa_v = nn.Parameter(block_w['att.time_maa_v'])
+        self.att_time_maa_r = nn.Parameter(block_w['att.time_maa_r'])
+        self.att_time_maa_g = nn.Parameter(block_w['att.time_maa_g'])
         self.att_time_maa_w1 = nn.Parameter(block_w['att.time_maa_w1'])
         self.att_time_maa_w2 = nn.Parameter(block_w['att.time_maa_w2'])
         self.att_time_decay = nn.Parameter(block_w['att.time_decay'])
@@ -70,22 +79,6 @@ class RWKV_Block(nn.Module):
         self.att_output.weight = nn.Parameter(block_w['att.output.weight'])
         self.att_gate = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.att_gate.weight = nn.Parameter(block_w['att.gate.weight'])
-
-        # 预先堆叠权重张量
-        self.att_stacked_weights = (
-            torch.stack(
-                [
-                    block_w['att.time_maa_k'],
-                    block_w['att.time_maa_w'],
-                    block_w['att.time_maa_v'],
-                    block_w['att.time_maa_r'],
-                    block_w['att.time_maa_g'],
-                ],
-                dim=0,
-            )
-            .unsqueeze(0)
-            .to(args['device'])  # shape: (1, 1, 5, hidden_size)
-        )
 
         if self.onnx_opset >= 18:
             self.att_group_norm = nn.GroupNorm(num_groups=n_head, num_channels=n_embd, eps=1e-5, affine=True)
@@ -183,6 +176,7 @@ class RWKV_Block(nn.Module):
         Returns:
             torch.Tensor: 混合后的张量，形状与输入的x相同。
         """
+        Batch, L, _ = x.shape
         i0 = (2 + self.head_size) * i + 0
 
         sx_lerp = torch.empty(x.shape, device=x.device)
@@ -220,21 +214,28 @@ class RWKV_Block(nn.Module):
 
         sx = state[:, i1] - x
         state[:, i1] = x
-        
+
         xxx = x + sx * self.att_time_maa_x
         xxx = torch.tanh(xxx @ self.att_time_maa_w1).view(batch_size, 5, 1, -1)
         xxx = torch.matmul(xxx, self.att_time_maa_w2).view(batch_size, 5, -1)
+        mw, mk, mv, mr, mg = xxx.unbind(dim=1)
 
-        # 使用广播机制一次性计算
-        x_kwvrg = x.unsqueeze(1) + sx.unsqueeze(1) * (self.att_stacked_weights + xxx)
-        # shape: (batch_size, 5, hidden_size)
+        xw = x + sx * (self.att_time_maa_w + mw)
+        xk = x + sx * (self.att_time_maa_k + mk)
+        xv = x + sx * (self.att_time_maa_v + mv)
+        xr = x + sx * (self.att_time_maa_r + mr)
+        xg = x + sx * (self.att_time_maa_g + mg)
 
-        # 计算 w, r, k, v, g
-        w = torch.exp(-torch.exp((self.att_time_decay + (torch.tanh(x_kwvrg[:, 1] @ self.att_time_decay_w1) @ self.att_time_decay_w2)).view(batch_size, H, S, 1)))
-        r = self.att_receptance(x_kwvrg[:, 3]).view(batch_size, H, 1, S)
-        k = self.att_key(x_kwvrg[:, 0]).view(batch_size, H, S, 1)
-        v = self.att_value(x_kwvrg[:, 2]).view(batch_size, H, 1, S)
-        g = self.silu(self.att_gate(x_kwvrg[:, 4]))
+        w = (self.att_time_decay + (torch.tanh(xw @ self.att_time_decay_w1) @ self.att_time_decay_w2))
+
+        # 计算注意力机制的权重
+        w = torch.exp(-torch.exp(w.view(batch_size, H, S, 1)))
+
+        # 计算注意力机制的组件
+        r = self.att_receptance(xr).view(batch_size, H, 1, S)
+        k = self.att_key(xk).view(batch_size, H, S, 1)
+        v = self.att_value(xv).view(batch_size, H, 1, S)
+        g = self.silu(self.att_gate(xg))
 
         # 使用注意力机制更新状态
         s = state[:, (2+S)*i+2:(2+S)*(i+1), :].view(batch_size, H, S, S)
@@ -247,11 +248,12 @@ class RWKV_Block(nn.Module):
         if self.onnx_opset >= 18:
             x = self.att_group_norm(x.flatten(start_dim=1)) * g
         else:
-            x = x.flatten(start_dim=1) 
+            x = x.flatten(start_dim=1)
             x = self.manual_group_norm(x, num_groups=H, weight=self.att_group_norm_weight, bias=self.att_group_norm_bias) * g
 
         # 应用输出层并返回结果
         return self.att_output(x)
+
 
     def time_mixing_parallel(self, x: torch.Tensor, state: torch.Tensor, i: int) -> torch.Tensor:
         """
@@ -280,34 +282,33 @@ class RWKV_Block(nn.Module):
 
         xxx = x + sx_lerp * self.att_time_maa_x # torch.Size([B, L, 2048])
         xxx = torch.tanh(xxx @ self.att_time_maa_w1).view(batch_size, L, 5, 1, -1) # att_time_maa_w1: [2048, 160]
-        xxx = torch.matmul(xxx, self.att_time_maa_w2).view(batch_size, L, 5, -1) # [Batch, L, 5, 2048] 
-        
+        xxx = torch.matmul(xxx, self.att_time_maa_w2).view(batch_size, L, 5, -1) # [Batch, L, 5, 2048]
         # att_time_maa_w2: torch.Size([5, 32, 2048])
-        # mw, mk, mv, mr, mg = xxx.unbind(dim=2) # [10, 100, 2048]
-        # xw = x + sx_lerp * (self.att_time_maa_w + mw) # torch.Size([B, L, 2048])
-        # xk = x + sx_lerp * (self.att_time_maa_k + mk)
-        # xv = x + sx_lerp * (self.att_time_maa_v + mv)
-        # xr = x + sx_lerp * (self.att_time_maa_r + mr)
-        # xg = x + sx_lerp * (self.att_time_maa_g + mg)
+        mw, mk, mv, mr, mg = xxx.unbind(dim=2) # [10, 100, 2048]
 
-        # 使用广播机制一次性计算
-        x_kwvrg = x.unsqueeze(2) + sx_lerp.unsqueeze(2) * (self.att_stacked_weights.unsqueeze(0) + xxx)
-        # shape: (batch_size, seq_length, 5, hidden_size)
-        
-        # 计算 w, r, k, v, g
-        w = torch.exp(-torch.exp((self.att_time_decay + (torch.tanh(x_kwvrg[:,:,1] @ self.att_time_decay_w1) @ self.att_time_decay_w2)).view(batch_size, L, H, S, 1)))
-        r = self.att_receptance(x_kwvrg[:,:,3]).view(batch_size, L, H, 1, S)  
-        k = self.att_key(x_kwvrg[:,:,0]).view(batch_size, L, H, S, 1)
-        v = self.att_value(x_kwvrg[:,:,2]).view(batch_size, L, H, 1, S)
-        g = self.silu(self.att_gate(x_kwvrg[:,:,4])) # [B, L, 2048]
-
+        xw = x + sx_lerp * (self.att_time_maa_w + mw) # torch.Size([B, L, 2048])
+        xk = x + sx_lerp * (self.att_time_maa_k + mk)
+        xv = x + sx_lerp * (self.att_time_maa_v + mv)
+        xr = x + sx_lerp * (self.att_time_maa_r + mr)
+        xg = x + sx_lerp * (self.att_time_maa_g + mg)
+        # self.att_time_decay_w1 [2048, 64]
+        w = (self.att_time_decay + (torch.tanh(xw @ self.att_time_decay_w1) @ self.att_time_decay_w2))
+        # 计算注意力机制的权重
+        # 此时w torch.Size([B, L, 2048])
+        w = torch.exp(-torch.exp(w.view(batch_size, L, H, S, 1)))
+        # 计算注意力机制的组件
+        r = self.att_receptance(xr).view(batch_size, L, H, 1, S)
+        k = self.att_key(xk).view(batch_size, L, H, S, 1)
+        v = self.att_value(xv).view(batch_size, L, H, 1, S)
+        g = self.silu(self.att_gate(xg)) # [10, 100, 2048]
         # 使用注意力机制更新状态
         s = state[:, (2+S)*i+2:(2+S)*(i+1)].view(batch_size, H, S, S)
         a = k @ v # a: [batch_size, L, H, S, S]
 
         state_s = torch.empty(batch_size, L, H, S, S, device=x.device) #初始化state_s的结果张量
         state_s[:, 0] = s #把第一个a_{t-1, j}赋值给state_s
-        
+
+
         for l in range(L-1):
             s = a[:, l] + w[:, l] * s.clone() #这里计算出state_s的值.clone()
             state_s[:, l+1] = s # 循环赋值
@@ -328,6 +329,7 @@ class RWKV_Block(nn.Module):
 
         # 应用输出层并返回结果
         return self.att_output(x)
+
 
     def forward(self, x: torch.Tensor, state: torch.Tensor, i: int) -> torch.Tensor:
         """
@@ -372,50 +374,20 @@ class RWKV_RNN(nn.Module):
     Args:
         args (dict): 参数字典。
     """
-    def __init__(self, args: dict):
-        super().__init__()
-        self.args = args
+    def __init__(self, args: ModelArgs):
+        super(RWKV_RNN,self).__init__()
+        self.args:ModelArgs = args
         try:
-            self.onnx_opset = int(self.args['onnx_opset'])
+            self.onnx_opset = int(args.onnx_opset)
         except:
             self.onnx_opset = 16 #默认是最低的，op17版本才支持LayerNorm算子，op18版本才支持GroupNorm算子
         print('onnx opset ', self.onnx_opset)
-        
-        # 加载权重
-        if 'init_model' in self.args and self.args['init_model'] == True:
-            self.init_params()
-        else:
-            self.load_params()
-        
         self.eval()
-        
-        
+        # 加载权重
+        if not args.MODEL_NAME.endswith('.pth'):
+            args.MODEL_NAME += '.pth'
+        w = torch.load(args.MODEL_NAME, map_location='cpu')
 
-    def init_params(self):
-        # 检查参数是否都存在
-        assert 'n_embd' in self.args
-        assert 'n_layer' in self.args
-        assert 'vocab_size' in self.args
-        assert 'ctx_len' in self.args
-        assert 'head_size_a' in self.args
-        assert 'head_size_divisor' in self.args
-
-        model_init = RWKV_x060(self.args)
-        # 使用初始化的权重加载模型
-        self.load_params(load_from_file=False, w=model_init.state_dict())
-        del model_init
-        import gc
-        gc.collect()
-
-
-    def load_params(self, load_from_file: bool = True, w: dict = None):
-        if load_from_file:
-            if not self.args['MODEL_NAME'].endswith('.pth'):
-                self.args['MODEL_NAME'] += '.pth'
-            w = torch.load(self.args['MODEL_NAME'], map_location=self.args['device'])
-        else:
-            assert w is not None
-        
         # 将所有权重转换为float32
         self.num_layer = 0
         for k in w.keys():
@@ -431,35 +403,46 @@ class RWKV_RNN(nn.Module):
         self.state_size = [self.num_layer * (2 + self.head_size), self.n_embd]
 
         print(f"state_size:{self.state_size}") # 这里打印状态的形状
-        
+
         # 初始化模型参数
-        self.emb = nn.Embedding.from_pretrained(w['emb.weight'], freeze=True)
+        if self.args.prev_id is None:
+            self.emb = nn.Embedding.from_pretrained(w['emb.weight'], freeze=True)
 
-        if self.onnx_opset >= 17:
-            self.ln0 = nn.LayerNorm(self.n_embd)
-            self.ln0.weight = nn.Parameter(w['blocks.0.ln0.weight'])
-            self.ln0.bias = nn.Parameter(w['blocks.0.ln0.bias'])
+            if self.onnx_opset >= 17:
+                self.ln0 = nn.LayerNorm(self.n_embd)
+                self.ln0.weight = nn.Parameter(w['blocks.0.ln0.weight'])
+                self.ln0.bias = nn.Parameter(w['blocks.0.ln0.bias'])
+            else:
+                self.ln0_weight = nn.Parameter(w['blocks.0.ln0.weight'])
+                self.ln0_bias = nn.Parameter(w['blocks.0.ln0.bias'])
+
+        self.blocks:Dict[str, RWKV_Block] = {}
+        if self.args.rank_id is not None:
+            block_num = self.num_layer // self.args.world_size
+            block_start = self.args.rank_id * block_num
+            block_end = min(block_start+block_num,self.num_layer)
+            self.block_num = block_num
         else:
-            self.ln0_weight = nn.Parameter(w['blocks.0.ln0.weight'])
-            self.ln0_bias = nn.Parameter(w['blocks.0.ln0.bias'])
-
-        self.blocks = nn.ModuleList()
-        
-        for i in range(self.num_layer):
+            block_start = 0
+            block_end = self.num_layer
+            self.block_num = self.num_layer
+        for i in range(block_start,block_end):
             # 提取当前块的权重
             block_w = {k[len(f'blocks.{i}.'):]: v for k, v in w.items() if f'blocks.{i}.' in k}
-            self.blocks.append(RWKV_Block(block_w, self.n_embd, self.n_head, self.args, self.onnx_opset))
+            self.blocks[str(i)] = RWKV_Block(block_w, self.n_embd, self.n_head, self.onnx_opset)
+        self.blocks = nn.ModuleDict(self.blocks)
 
-        if self.onnx_opset >= 17:
-            self.ln_out = nn.LayerNorm(self.n_embd)
-            self.ln_out.weight = nn.Parameter(w['ln_out.weight'])
-            self.ln_out.bias = nn.Parameter(w['ln_out.bias'])
-        else:
-            self.ln_out_weight = nn.Parameter(w['ln_out.weight'])
-            self.ln_out_bias = nn.Parameter(w['ln_out.bias'])
-        
-        self.head = nn.Linear(self.n_embd, self.args['vocab_size'], bias=False)
-        self.head.weight = nn.Parameter(w['head.weight'])
+        if self.args.next_id is None:
+            if self.onnx_opset >= 17:
+                self.ln_out = nn.LayerNorm(self.n_embd)
+                self.ln_out.weight = nn.Parameter(w['ln_out.weight'])
+                self.ln_out.bias = nn.Parameter(w['ln_out.bias'])
+            else:
+                self.ln_out_weight = nn.Parameter(w['ln_out.weight'])
+                self.ln_out_bias = nn.Parameter(w['ln_out.bias'])
+
+            self.head = nn.Linear(self.n_embd, args.vocab_size, bias=False)
+            self.head.weight = nn.Parameter(w['head.weight'])
 
     def manual_layer_norm(self, x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
         """
@@ -493,14 +476,14 @@ class RWKV_RNN(nn.Module):
             x = self.ln0(x)
         else:
             x = self.manual_layer_norm(x, self.ln0_weight, self.ln0_bias, 1e-5)
-        # 开始循环推理RWKV Block    
-        for i, block in enumerate(self.blocks):
+        # 开始循环推理RWKV Block
+        for i, block in enumerate(self.blocks.values()):
             x = block(x, state, i)
-            
+
         if self.onnx_opset >= 17:
             x = self.ln_out(x)
         else:
-            x = self.manual_layer_norm(x, self.ln_out_weight, self.ln_out_bias, 1e-5) 
+            x = self.manual_layer_norm(x, self.ln_out_weight, self.ln_out_bias, 1e-5)
         x = self.head(x)
         return x, state
 
@@ -513,21 +496,25 @@ class RWKV_RNN(nn.Module):
         Returns:
             torch.Tensor: 模型输出。
         """
-        x = self.emb(token)
-        if self.onnx_opset >= 17:
-            x = self.ln0(x)
+        if self.args.prev_id is None:
+            x = self.emb(token)
+            if self.onnx_opset >= 17:
+                x = self.ln0(x)
+            else:
+                x = self.manual_layer_norm(x, self.ln0_weight, self.ln0_bias, 1e-5)
         else:
-            x = self.manual_layer_norm(x, self.ln0_weight, self.ln0_bias, 1e-5)
-        # 开始循环推理RWKV Block   
-        for i, block in enumerate(self.blocks):
+            x = token
+        # 开始循环推理RWKV Block
+        for i, block in enumerate(self.blocks.values()):
             x = block.forward_parallel(x, state, i)
-        if self.onnx_opset >= 17:
-            x = self.ln_out(x)
-        else:
-            x = self.manual_layer_norm(x, self.ln_out_weight, self.ln_out_bias, 1e-5) 
-        x = self.head(x)
+        if self.args.next_id is None:
+            if self.onnx_opset >= 17:
+                x = self.ln_out(x)
+            else:
+                x = self.manual_layer_norm(x, self.ln_out_weight, self.ln_out_bias, 1e-5)
+            x = self.head(x)
         return x, state
-    
+
     def save_model(self, model_path):
         """
         将训练后的模型保存为 .pth 文件。
@@ -550,7 +537,7 @@ class RWKV_RNN(nn.Module):
                 state_dict[name] = param.data
 
         # 保存 RWKV_Block 的权重
-        for i, block in enumerate(self.blocks):
+        for i, block in self.blocks.items():
             for name, param in block.named_parameters():
                 # 根据名称对权重进行调整
                 if name == 'att_group_norm.weight':
@@ -570,12 +557,6 @@ class RWKV_RNN(nn.Module):
                     param_data = param.data
 
                 state_dict[f'blocks.{i}.{name}'] = param_data
-
-            # 保存单独的注意力参数
-            for param_idx, param_name in enumerate(['att.time_maa_k', 'att.time_maa_w', 'att.time_maa_v', 'att.time_maa_r', 'att.time_maa_g']):
-                state_dict[f'blocks.{i}.{param_name}'] = block.att_stacked_weights.data[:, 0, param_idx]
-
-
 
         # 保存模型权重到 .pth 文件
         if not model_path.endswith('.pth'):
