@@ -69,26 +69,27 @@ def main(args:ModelArgs):
     # 根据rank为0的进程广播tensor
     dist.broadcast(datasize, 0)  # 其他进程接收广播的tensor
     datasize = datasize.item()
+    if dataloader is None:
+        x = y = torch.tensor([0])
+        dataloader = [(x,y)] * datasize
     model.train()
     with torch.autograd.set_detect_anomaly(True):
-        if args.rank_id == 0:
-            with tqdm(dataloader) as tbar:
-                for x,y in tbar:
-                    x=x[0].cuda()
-                    y=y[0].cuda()
-                    optimizer.zero_grad()
-                    loss = wrapper.train_with_interleaving(x,y,criterion)
-                    if loss is not None:
-                        tbar.set_postfix(loss=loss.item())
-                    optimizer.step()
-                    if args.device == 'cuda':
-                        torch.cuda.empty_cache()
-                    elif args.device == 'musa':
-                        torch.musa.empty_cache()
-        else:
-            for i in range(datasize):
+        with tqdm(dataloader,disable=(args.rank_id != 0)) as tbar:
+            for x,y in tbar:
+                x=x[0].cuda()
+                y=y[0].cuda()
+                if args.prev_id is None:
+                    num_tok = torch.tensor([len(x)]).cuda()
+                    dist.broadcast(num_tok,0)
+                else:
+                    num_tok = torch.tensor([0]).cuda()
+                    dist.broadcast(num_tok,0)
+                    x = y = torch.zeros((num_tok,)).long().cuda()
+                dist.broadcast(y, 0)
                 optimizer.zero_grad()
-                loss = wrapper.train_with_interleaving(None,None,criterion)
+                loss = wrapper.train_with_interleaving(x,y,criterion)
+                if loss is not None:
+                    tbar.set_postfix(loss=loss.item())
                 optimizer.step()
                 if args.device == 'cuda':
                     torch.cuda.empty_cache()
