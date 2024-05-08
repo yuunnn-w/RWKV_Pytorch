@@ -1,7 +1,7 @@
 {
   "MODEL_NAME": "./weight/RWKV-x060-World-1B6-v2-20240208-ctx4096",
   "TOKENIZER_PATH": "asset/rwkv_vocab_v20230424.txt",
-  "DATASET_PATH": "/home/aknife/code/mistral-src-main/data/sample.jsonl",
+  "DATASET_PATH": "data/sample.jsonl",
   "device": "cuda",
   "vocab_size": 65536,
   "batch_size": 4,
