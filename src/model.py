@@ -396,9 +396,10 @@ class RWKV_RNN(nn.Module):
         assert 'n_embd' in self.args
         assert 'n_layer' in self.args
         assert 'vocab_size' in self.args
-        assert 'ctx_len' in self.args
-        assert 'head_size_a' in self.args
-        assert 'head_size_divisor' in self.args
+        if 'head_size_a' not in self.args:
+            self.args['head_size_a'] = 64
+        if 'head_size_divisor' not in self.args:
+            self.args['head_size_divisor'] = 8
 
         model_init = RWKV_x060(self.args)
         # 使用初始化的权重加载模型
@@ -573,7 +574,7 @@ class RWKV_RNN(nn.Module):
 
             # 保存单独的注意力参数
             for param_idx, param_name in enumerate(['att.time_maa_k', 'att.time_maa_w', 'att.time_maa_v', 'att.time_maa_r', 'att.time_maa_g']):
-                state_dict[f'blocks.{i}.{param_name}'] = block.att_stacked_weights.data[:, 0, param_idx]
+                state_dict[f'blocks.{i}.{param_name}'] = block.att_stacked_weights.data[0, param_idx, :]
 
 
 
