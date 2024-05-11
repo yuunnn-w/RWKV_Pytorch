@@ -6,3 +6,4 @@ onnxruntime>=1.17.1
 icecream
 Flask
 tqdm
+optimum

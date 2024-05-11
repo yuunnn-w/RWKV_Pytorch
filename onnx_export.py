@@ -8,7 +8,8 @@ if __name__ == '__main__':
     args = {
         'MODEL_NAME': 'weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096', #模型文件的名字，pth结尾的权重文件。
         'vocab_size': 65536, #词表大小
-	'onnx_opset': '12',
+        'onnx_opset': '17', # 12
+        'device': 'cpu',
     }
     
     # 加载模型
@@ -27,12 +28,16 @@ if __name__ == '__main__':
     os.makedirs("onnx", exist_ok=True)
     # 导出模型
     print("\nExport Onnx...")
+
+    outputdir = f"./onnx/rwkv/"
+    if not os.path.exists(outputdir):
+        os.makedirs(outputdir)
     torch.onnx.export(model,
                       (example_token, example_state),
-                      f"./onnx/{args['MODEL_NAME'].split('/')[-1]}.onnx",
+                      f"{outputdir}{args['MODEL_NAME'].split('/')[-1].replace(".pth","")}.onnx",
                       export_params=True,
                       verbose=True,
-                      opset_version=12, #LayerNorm最低支持是op17
+                      opset_version=16, #LayerNorm最低支持是op17
                       do_constant_folding=True,
                       input_names=['token', 'input_state'],
                       output_names=['out', 'out_state'],
