@@ -396,9 +396,10 @@ class RWKV_RNN(nn.Module):
         assert 'n_embd' in self.args
         assert 'n_layer' in self.args
         assert 'vocab_size' in self.args
-        assert 'ctx_len' in self.args
-        assert 'head_size_a' in self.args
-        assert 'head_size_divisor' in self.args
+        if 'head_size_a' not in self.args:
+            self.args['head_size_a'] = 64
+        if 'head_size_divisor' not in self.args:
+            self.args['head_size_divisor'] = 8
 
         model_init = RWKV_x060(self.args)
         # 使用初始化的权重加载模型
