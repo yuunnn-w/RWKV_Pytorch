@@ -72,8 +72,8 @@ def sample_logits_numpy(out: np.ndarray, temperature: float = 1.0, top_p: float 
         return sampled_index
 
     # 将logits转换为对数概率
-    log_probabilities = out - \
-        np.log(np.sum(np.exp(out), axis=-1, keepdims=True))
+    log_probabilities = out / temperature - \
+        np.log(np.sum(np.exp(out / temperature), axis=-1, keepdims=True))
 
     # 计算累积对数概率
     sorted_log_probabilities = np.sort(log_probabilities, axis=-1)[:, ::-1]
