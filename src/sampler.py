@@ -11,7 +11,7 @@ def sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.
         top_p (float): Top-p truncation parameter for stabilizing and controlling the sampling probability distribution. Default is 0.8.
 
     Returns:
-        torch.Tensor: Sampled indices, shape [*].
+        torch.Tensor: Sampled indices, shape [*]. For example, tensor([10464]).
     """
     assert temperature > 0, "Temperature should be positive"
     assert 0 <= top_p <= 1, "Top-p should be in the range [0, 1]"
@@ -21,7 +21,7 @@ def sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.
         return torch.argmax(out, dim=-1)
 
     if top_p == 1.0:
-        return torch.multinomial(torch.nn.functional.softmax(out, dim=-1), num_samples=1).squeeze()
+        return torch.multinomial(torch.nn.functional.softmax(out, dim=-1), num_samples=1).squeeze(1)
 
     # Convert logits to log probabilities
     log_probabilities = torch.nn.functional.log_softmax(
@@ -39,7 +39,7 @@ def sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.
 
     # Generate a single sample
     sampled_index = torch.multinomial(
-        torch.exp(log_probabilities), num_samples=1).squeeze()
+        torch.exp(log_probabilities), num_samples=1).squeeze(1)
 
     return sampled_index
 
@@ -67,11 +67,13 @@ def sample_logits_numpy(out: np.ndarray, temperature: float = 1.0, top_p: float 
         # 根据softmax概率分布进行采样
         probabilities = np.exp(out - np.max(out, axis=-1, keepdims=True))
         probabilities /= np.sum(probabilities, axis=-1, keepdims=True)
-        return np.argmax(np.random.multinomial(1, probabilities.flatten()).reshape(out.shape[:-1]), axis=-1)
+        sampled_index = np.apply_along_axis(
+            lambda p: np.random.choice(len(p), p=p), -1, probabilities)
+        return sampled_index
 
     # 将logits转换为对数概率
-    log_probabilities = out - \
-        np.log(np.sum(np.exp(out), axis=-1, keepdims=True))
+    log_probabilities = out / temperature - \
+        np.log(np.sum(np.exp(out / temperature), axis=-1, keepdims=True))
 
     # 计算累积对数概率
     sorted_log_probabilities = np.sort(log_probabilities, axis=-1)[:, ::-1]
@@ -86,7 +88,8 @@ def sample_logits_numpy(out: np.ndarray, temperature: float = 1.0, top_p: float 
     # 根据调整后的对数概率生成一个样本
     probabilities = np.exp(log_probabilities)
     probabilities /= np.sum(probabilities, axis=-1, keepdims=True)
-    sampled_index = np.argmax(np.random.multinomial(
-        1, probabilities.flatten()).reshape(out.shape[:-1]), axis=-1)
+
+    sampled_index = np.apply_along_axis(
+        lambda p: np.random.choice(len(p), p=p), -1, probabilities)
 
     return sampled_index
