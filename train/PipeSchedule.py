@@ -52,9 +52,11 @@ class PipeSchedule:
     def forward(self,x,state):
         if self.prev_id is not None:
             num_token = len(x[0])
-            x = torch.zeros((1,num_token,P2pLayerBegin.n_embd),dtype=torch.float,requires_grad=True).cuda()
+            x = torch.zeros((1,num_token,P2pLayerBegin.n_embd),dtype=self.model.datatype,requires_grad=True).cuda()
         x = P2pLayerBegin.apply(x)
+        print(f'RANK[{self.rank_id}] forward begin')
         x,state = self.model.forward_parallel(x, state)
+        print(f'RANK[{self.rank_id}] forward end')
         x = P2pLayerEnd.apply(x)
         self.output_tensors.append(x.sum())
         return x, state.detach_()
@@ -62,6 +64,7 @@ class PipeSchedule:
         x = self.output_tensors[0]
         self.output_tensors = self.output_tensors[1:]
         x.backward()
+        print(f'RANK[{self.rank_id}] backward')
     def train_with_gpipe(self,x,y,loss_fn):
         # todo: 未完成
         batch_size = len(x)
@@ -88,8 +91,8 @@ class PipeSchedule:
         input_mask[-1] = min(input_mask[-1],num_tok)
         batch_size = len(input_mask) - 1
         self.output_tensors = []
-        state = torch.zeros((1,self.model.block_num * (self.model.head_size+2),self.model.n_embd)).cuda()
-        loss_total = torch.tensor([0.0]).float().cuda()
+        state = torch.zeros((1,self.model.block_num * (self.model.head_size+2),self.model.n_embd),dtype=self.model.datatype).cuda()
+        loss_total = torch.tensor([0.0],dtype=self.model.datatype).cuda()
         if self.next_id is None:
             for i in range(batch_size):
                 start,end = tuple(input_mask[i:i+2])
