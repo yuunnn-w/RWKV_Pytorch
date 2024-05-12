@@ -13,6 +13,7 @@ import torch
 import time
 import uuid
 import json
+import copy
 
 app = Flask(__name__)
 
@@ -29,11 +30,15 @@ def add_cors_headers(response):
 def init_model():
     # 模型参数配置
     args = {
-        'MODEL_NAME': './weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096',
-        'vocab_size': 65536,
-        'device': "cpu",
-        'onnx_opset': '18',
-        "parrallel": "False",
+        # 模型文件的名字，pth结尾的权重文件。
+        'MODEL_NAME': './weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth',
+        'vocab_size': 65536,  # 词表大小
+        'device': 'cpu',  # 运行设备，可选'cpu','cuda','musa','npu'
+        'onnx_opset': '18',  # 非必要不要使用 <18 的值，会引起数值不稳定
+        'parrallel': 'True',  # 是否使用并行计算
+        # 如果不加载state权重，请置为''
+        'STATE_NAME': './weight/rwkv-x060-chn_single_round_qa-1B6-20240511-ctx1024'
+        # 请务必保证模型权重和State权重对应，这里暂时不做检查
     }
     args = device_checker(args)
     device = args['device']
@@ -42,10 +47,21 @@ def init_model():
 
     print("Loading model and tokenizer...")
     model = RWKV_RNN(args).to(device)
+    # 初始化状态
+    global_state = torch.zeros(
+        1, model.state_size[0], model.state_size[1]).cpu()
+    if 'STATE_NAME' in args and args['STATE_NAME'] != '':
+        STATE = torch.load(args['STATE_NAME']+'.pth')
+        # 这里把训练好的state加载进去
+        n_head, head_size = model.n_head, model.head_size
+        for i, (key, value) in enumerate(STATE.items()):
+            global_state[:, ((2 + head_size)*i + 2):((2 + head_size)*(i + 1)),
+                  :] = value.contiguous().permute(0, 2, 1).reshape(head_size, -1)
+
     tokenizer = RWKV_TOKENIZER("asset/rwkv_vocab_v20230424.txt")
     print("Done")
     print(f"Model name: {args.get('MODEL_NAME').split('/')[-1]}")
-    return model, tokenizer, device, args
+    return model, tokenizer, global_state, device, args
     
 def format_messages_to_prompt(messages):
     formatted_prompt = ""
@@ -85,7 +101,8 @@ def generate_text(prompt, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n
     # 设置续写的初始字符串和参数
     encoded_input = tokenizer.encode([prompt])
     token = torch.tensor(encoded_input).long().to(device)
-    state = torch.zeros(1, model.state_size[0], model.state_size[1]).to(device)
+    state = copy.deepcopy(global_state)
+    state = state.to(device)
     prompt_tokens = len(encoded_input[0])
     stop_token = tokenizer.encode(stop)[0]
     
@@ -133,21 +150,23 @@ def generate_text(prompt, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n
 def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n\nUser']):
     encoded_input = tokenizer.encode([prompt])
     token = torch.tensor(encoded_input).long().to(device)
-    state = torch.zeros(1, model.state_size[0], model.state_size[1]).to(device)
+    state = copy.deepcopy(global_state)
+    state = state.to(device)
     prompt_tokens = len(encoded_input[0])
 
     if args['parrallel'] == "True":
         with torch.no_grad():
             token_out, state_out = model.forward_parallel(token, state)
-            out = token_out[:, -1]
+            out = token_out[:, -1]  # 取最后一个生成的token
     else:
-        # 预填充状态
-        token = token.transpose(0, 1).to(device)
+       # 预填充状态
+        token_temp = token.transpose(0, 1).to(device)
         with torch.no_grad():
-            for t in token:
-                out, state = model.forward(t.unsqueeze(1), state)
-                out = out[:, -1]
+            for t in token_temp:
+                out, state = model.forward(t, state)
+        del token_temp  # 释放内存
     del token
+
     generated_tokens = ''
     completion_tokens = 0
     if_max_token = True
@@ -156,7 +175,7 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
         with torch.no_grad():
             out, state = model.forward(token_sampled, state)
         
-        last_token = tokenizer.decode(token_sampled.unsqueeze(1).tolist())[0]
+        last_token = tokenizer.decode(token_sampled.unsqueeze(1).cpu().tolist())[0]
         generated_tokens += last_token
         completion_tokens += 1
         
@@ -265,6 +284,6 @@ def create_completion():
         return str(e), 500
 
 if __name__ == '__main__':
-    model, tokenizer, device, args = init_model()
+    model, tokenizer, global_state, device, args = init_model()
     app.run(host='0.0.0.0', port=8848)
 
