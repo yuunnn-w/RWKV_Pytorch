@@ -3,3 +3,4 @@
 *.pth
 rwkv_vocab_v20230424.txt
 data/seq.jsonl
+onnx/*

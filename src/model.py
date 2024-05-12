@@ -383,11 +383,35 @@ class RWKV_RNN(nn.Module):
             self.onnx_opset = 16 #默认是最低的，op17版本才支持LayerNorm算子，op18版本才支持GroupNorm算子
         print('onnx opset ', self.onnx_opset)
         self.eval()
-        # 加载权重
-        if not args.MODEL_NAME.endswith('.pth'):
-            args.MODEL_NAME += '.pth'
-        w = torch.load(args.MODEL_NAME, map_location='cpu')
+        
+        
 
+    def init_params(self):
+        # 检查参数是否都存在
+        assert 'n_embd' in self.args
+        assert 'n_layer' in self.args
+        assert 'vocab_size' in self.args
+        if 'head_size_a' not in self.args:
+            self.args['head_size_a'] = 64
+        if 'head_size_divisor' not in self.args:
+            self.args['head_size_divisor'] = 8
+
+        model_init = RWKV_x060(self.args)
+        # 使用初始化的权重加载模型
+        self.load_params(load_from_file=False, w=model_init.state_dict())
+        del model_init
+        import gc
+        gc.collect()
+
+
+    def load_params(self, load_from_file: bool = True, w: dict = None):
+        if load_from_file:
+            if not self.args['MODEL_NAME'].endswith('.pth'):
+                self.args['MODEL_NAME'] += '.pth'
+            w = torch.load(self.args['MODEL_NAME'], map_location=self.args['device'])
+        else:
+            assert w is not None
+        
         # 将所有权重转换为float32
         self.num_layer = 0
         for k in w.keys():
@@ -557,6 +581,12 @@ class RWKV_RNN(nn.Module):
                     param_data = param.data
 
                 state_dict[f'blocks.{i}.{name}'] = param_data
+
+            # 保存单独的注意力参数
+            for param_idx, param_name in enumerate(['att.time_maa_k', 'att.time_maa_w', 'att.time_maa_v', 'att.time_maa_r', 'att.time_maa_g']):
+                state_dict[f'blocks.{i}.{param_name}'] = block.att_stacked_weights.data[0, param_idx, :]
+
+
 
         # 保存模型权重到 .pth 文件
         if not model_path.endswith('.pth'):
