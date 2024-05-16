@@ -86,7 +86,7 @@ class RWKV_TOKENIZER():
         try:
             return b''.join(map(lambda i: self.idx2token[i], tokens))
         except:
-            return b'\ufffd'
+            return rb'\ufffd'
 
     def encode(self, src):
         if isinstance(src, str):
