@@ -45,9 +45,9 @@ class TextDataset(Dataset):
 # 初始化模型参数
 args = {
     # 模型文件的名字，pth结尾的权重文件。
-    'MODEL_NAME': './weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth',
+    'MODEL_NAME': './weight/ttt',
     'vocab_size': 65536  # 词表大小，不要乱改
-    , 'device': "cuda"    # ,'device': "cuda"
+    , 'device': "cpu"    # ,'device': "cuda"
     , 'onnx_opset': 18
 }
 args = device_checker(args)
@@ -75,10 +75,10 @@ epochs = 1
 
 # with torch.autograd.set_detect_anomaly(True): # 检测梯度异常
 for epoch in range(epochs):
-    accumulated_loss=0
+    accumulated_loss = 0
     optimizer.zero_grad()
-    累积总长=0
-    上一步累积总长=0
+    total_length = 0
+    prev_total_length = 0
     with tqdm(dataloader) as tbar:
         for step, (x, y) in enumerate(tbar, start=1):
             x = x[0].to(device)
@@ -86,14 +86,14 @@ for epoch in range(epochs):
             data_len = x.shape[1]
             state = torch.zeros(
                 1, model.state_size[0], model.state_size[1]).to(device)
-            累积总长+=data_len
-            先前梯度缩放因子=上一步累积总长/累积总长
-            accumulated_loss*=先前梯度缩放因子
+            total_length += data_len
+            prev_scale_factor = prev_total_length/total_length
+            accumulated_loss *= prev_scale_factor
             # 根据序列的总长度对梯度进行规范化
             for param in model.parameters():
                 if param.grad is not None:
-                    param.grad *= 先前梯度缩放因子
-            
+                    param.grad *= prev_scale_factor
+
             for i in range((data_len-2)//slice_len+1):
                 start = i*slice_len
                 end = min((i+1)*slice_len, data_len-1)
@@ -103,17 +103,17 @@ for epoch in range(epochs):
                 token_out, state_new = model.forward_parallel(x_i, state)
                 state = state_new.detach()  # 使用 detach() 截断梯度传播
                 loss = criterion(token_out[0], y_i)
-                loss_weight = loss * (current_slice_len / 累积总长)
-                accumulated_loss+=loss_weight.item()
+                loss_weight = loss * (current_slice_len / total_length)
+                accumulated_loss += loss_weight.item()
                 loss_weight.backward()
 
-            上一步累积总长=累积总长
+            prev_total_length = total_length
 
             if step % accumulation_steps == 0 or step == len(dataloader):
                 optimizer.step()
                 optimizer.zero_grad()
-                累积总长=0
-                上一步累积总长=0
+                total_length = 0
+                prev_total_length = 0
 
             tbar.set_postfix(avg_loss=accumulated_loss)
 

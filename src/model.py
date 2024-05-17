@@ -413,7 +413,7 @@ class RWKV_RNN(nn.Module):
         if load_from_file:
             if not self.args['MODEL_NAME'].endswith('.pth'):
                 self.args['MODEL_NAME'] += '.pth'
-            w = torch.load(self.args['MODEL_NAME'], map_location=self.args['device'])
+            w = torch.load(self.args['MODEL_NAME'], map_location="cpu")
         else:
             assert w is not None
         
