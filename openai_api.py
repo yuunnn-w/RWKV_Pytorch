@@ -6,7 +6,7 @@
 ###############################################################
 from flask import Flask, request, Response, jsonify
 from src.model import RWKV_RNN
-from src.model_utils import device_checker
+from src.model_utils import device_checker, device_specific_empty_cache
 from src.sampler import sample_logits
 from src.rwkv_tokenizer import RWKV_TOKENIZER
 import torch
@@ -31,13 +31,13 @@ def init_model():
     # 模型参数配置
     args = {
         # 模型文件的名字，pth结尾的权重文件。
-        'MODEL_NAME': './weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth',
+        'MODEL_NAME': './weight/RWKV-x060-World-3B-v2.1-20240417-ctx4096.pth',
         'vocab_size': 65536,  # 词表大小
         'device': 'cpu',  # 运行设备，可选'cpu','cuda','musa','npu'
         'onnx_opset': '18',  # 非必要不要使用 <18 的值，会引起数值不稳定
         'parrallel': 'True',  # 是否使用并行计算
         # 如果不加载state权重，请置为''
-        'STATE_NAME': './weight/rwkv-x060-chn_single_round_qa-1B6-20240516-ctx2048.pth'
+        'STATE_NAME': './weight/rwkv-x060-chn_single_round_qa-3B-20240511-ctx1024.pth'
         # 请务必保证模型权重和State权重对应，这里暂时不做检查
     }
     args = device_checker(args)
@@ -135,6 +135,7 @@ def generate_text(prompt, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n
             
     total_tokens = prompt_tokens + completion_tokens
     usage = {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "total_tokens": total_tokens}
+    del state
     clear_cache()
     return generated_tokens, if_max_token, usage
 
@@ -208,18 +209,14 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
             }]
         }
         yield f"data: {json.dumps(response)}\n\n"
+    
+    del state
     clear_cache()    
     yield "data: [DONE]"         
 
 
 def clear_cache():
-    try:
-        if device == 'cuda':
-            torch.cuda.empty_cache()
-        elif device == 'musa':
-            torch.musa.empty_cache()
-    except:
-        pass
+    device_specific_empty_cache(args)
 
 # 处理 OPTIONS 请求
 @app.route('/v1/chat/completions', methods=['OPTIONS'])
