@@ -75,7 +75,7 @@ def format_messages_to_prompt(messages):
     return formatted_prompt
 
 # 生成文本的函数
-def generate_text(prompt, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n\nUser']):
+def generate_text(prompt, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n\nUser','<endoftext>']):
     """
     使用模型生成文本。
 
@@ -140,7 +140,7 @@ def generate_text(prompt, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n
     return generated_tokens, if_max_token, usage
 
 # 生成文本的生成器函数
-def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n\nUser']):
+def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n\nUser','<endoftext>']):
     encoded_input = tokenizer.encode([prompt])
     token = torch.tensor(encoded_input).long().to(device)
     state = copy.deepcopy(global_state)
