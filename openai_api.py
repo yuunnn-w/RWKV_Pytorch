@@ -75,8 +75,8 @@ def format_messages_to_prompt(messages):
     return formatted_prompt
 
 # 生成文本的函数
-def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, presence_penalty=0.2,
-                  frequency_penalty=0.2, stop=['\n\nUser', '<endoftext>']):
+def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, presence_penalty=0.0,
+                  frequency_penalty=0.0, stop=['\n\nUser', '<endoftext>']):
     """
     使用模型生成文本。
 
@@ -117,14 +117,16 @@ def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, pres
     if_max_token = True
     generated_texts = ''
     generated_tokens = None
+    freq_dict = None
     for step in range(max_tokens):
-        token_sampled, generated_tokens, _ = apply_penalties(
+        token_sampled, generated_tokens, freq_dict = apply_penalties(
             logits=out,
             presence_penalty=presence_penalty,
             temperature=temperature,
             top_p=top_p,
             frequency_penalty=frequency_penalty,
             token=generated_tokens,
+            freq_dict=freq_dict
         )
         with torch.no_grad():
             out, state = model.forward(token_sampled, state)
@@ -149,39 +151,46 @@ def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, pres
     return generated_texts, if_max_token, usage
 
 # 生成文本的生成器函数
-def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, presence_penalty = 0.2,
-    frequency_penalty = 0.2, stop=['\n\nUser', '<endoftext>']):
+def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, presence_penalty = 0.0,
+    frequency_penalty = 0.0, stop=['\n\nUser', '<endoftext>']):
     encoded_input = tokenizer.encode([prompt])
     token = torch.tensor(encoded_input).long().to(device)
     state = copy.deepcopy(global_state)
     state = state.to(device)
     prompt_tokens = len(encoded_input[0])
 
-    if args['parrallel'] == "True":
-        with torch.no_grad():
-            token_out, state = model.forward_parallel_slices(token, state, slice_len=1024)
-            out = token_out[:, -1]  # 取最后一个生成的token
-    else:
-       # 预填充状态
-        token_temp = token.transpose(0, 1).to(device)
-        with torch.no_grad():
-            for t in token_temp:
-                out, state = model.forward(t, state)
-        del token_temp  # 释放内存
-    del token
+    try:
+        if args['parrallel'] == "True":
+            with torch.no_grad():
+                token_out, state = model.forward_parallel_slices(token, state, slice_len=1024)
+                out = token_out[:, -1]  # 取最后一个生成的token
+        else:
+        # 预填充状态
+            token_temp = token.transpose(0, 1).to(device)
+            with torch.no_grad():
+                for t in token_temp:
+                    out, state = model.forward(t, state)
+            del token_temp  # 释放内存
+        del token
+    except GeneratorExit:
+        # 客户端断开连接，停止生成并清理资源
+        # clear_cache()
+        return
 
     generated_texts = ''
     generated_tokens = None
     completion_tokens = 0
     if_max_token = True
+    freq_dict = None
     for step in range(max_tokens):
-        token_sampled, generated_tokens, _ = apply_penalties(
+        token_sampled, generated_tokens, freq_dict = apply_penalties(
             logits=out,
             presence_penalty=presence_penalty,
             temperature=temperature,
             top_p=top_p,
             frequency_penalty=frequency_penalty,
             token=generated_tokens,
+            freq_dict=freq_dict
         )
         with torch.no_grad():
             out, state = model.forward(token_sampled, state)
@@ -214,7 +223,12 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
                     "finish_reason": None
                 }]
             }
-            yield f"data: {json.dumps(response)}\n\n"
+            try:
+                yield f"data: {json.dumps(response)}\n\n"
+            except GeneratorExit:
+                # 客户端断开连接，停止生成并清理资源
+                # clear_cache()
+                return
             
     if if_max_token:
         response = {
@@ -253,8 +267,8 @@ def create_completion():
         stream = data.get('stream', True)
         temperature = data.get('temperature', 1.5)
         top_p = data.get('top_p', 0.1)
-        presence_penalty = data.get('presence_penalty', 0.2)
-        frequency_penalty = data.get('frequency_penalty', 0.2)
+        presence_penalty = data.get('presence_penalty', 0.0)
+        frequency_penalty = data.get('frequency_penalty', 0.0)
         max_tokens = data.get('max_tokens', 512)
         stop = data.get('stop', ['\n\nUser'])
 

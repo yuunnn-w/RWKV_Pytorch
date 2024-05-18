@@ -47,7 +47,7 @@ def sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.
     return sampled_index
 
 
-def apply_penalties(logits: torch.Tensor, presence_penalty: float, temperature: float, top_p: float, frequency_penalty: float, token: Optional[torch.Tensor] = None, freq_dict: Optional[defaultdict] = None) -> Tuple[torch.Tensor, torch.Tensor, defaultdict]:
+def apply_penalties(logits: torch.Tensor, temperature: float, top_p: float, presence_penalty: float, frequency_penalty: float, token: Optional[torch.Tensor] = None, freq_dict: Optional[defaultdict] = None) -> Tuple[torch.Tensor, torch.Tensor, defaultdict]:
     """
     Apply penalties to the logits tensor and sample from it.
     """
@@ -60,14 +60,19 @@ def apply_penalties(logits: torch.Tensor, presence_penalty: float, temperature: 
         mask[0][token.tolist()] = True
 
         # 对已出现的token施加存在惩罚
-        logits = torch.where(mask, logits + presence_penalty, logits)
-
+        logits = torch.where(mask, logits - presence_penalty, logits)
+       
         # 根据token的出现频率施加频率惩罚
         freq_penalties = torch.tensor([freq_dict[i] for i in range(len(logits))], dtype=logits.dtype, device=logits.device)
-        logits += frequency_penalty * torch.sqrt(freq_penalties)
+        # 缩放频率惩罚,并裁剪到[0, 1]范围内
+        freq_penalties = torch.clamp(freq_penalties / len(freq_dict), 0, 1)
+        logits -= frequency_penalty * freq_penalties
 
     token_sampled = sample_logits(logits, temperature=temperature, top_p=top_p)
     
+    # 更新频率字典
+    freq_dict[token_sampled.item()] += 1
+
     if token is not None:
         token = torch.cat((token, token_sampled), 0)
     else:
@@ -137,14 +142,19 @@ def apply_penalties_numpy(logits: np.ndarray, presence_penalty: float, temperatu
         mask[0][token.tolist()] = True
 
         # 对已出现的token施加存在惩罚
-        logits = np.where(mask, logits + presence_penalty, logits)
+        logits = np.where(mask, logits - presence_penalty, logits)
 
         # 根据token的出现频率施加频率惩罚
         freq_penalties = np.array([freq_dict[i] for i in range(len(logits))], dtype=logits.dtype)
-        logits += frequency_penalty * np.sqrt(freq_penalties)
+        # 缩放频率惩罚,并裁剪到[0, 1]范围内
+        freq_penalties = np.clip(freq_penalties / len(freq_dict), 0, 1)
+        logits -= frequency_penalty * freq_penalties
 
     token_sampled = sample_logits_numpy(logits, temperature=temperature, top_p=top_p)
-    
+
+    # 更新频率字典
+    freq_dict[token_sampled.item()] += 1
+
     if token is not None:
         token = np.concatenate((token, token_sampled), axis=0)
     else:
