@@ -66,7 +66,7 @@ class RWKV_TOKENIZER():
             self.token2idx[v] = int(k)
 
         # 生成的某些 token 的索引值为 0,但是在 idx2token 字典中并没有对应的条目。
-        self.idx2token[0] = b'<endoftext>'  # 使用一个特殊的字节序列表示结束 token
+        self.idx2token[0] = b'<|endoftext|>'  # 使用一个特殊的字节序列表示结束 token
         self.root = TRIE()
         for t, i in self.token2idx.items():
             _ = self.root.add(t, val=(t, i))

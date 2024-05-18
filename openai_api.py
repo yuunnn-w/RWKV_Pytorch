@@ -43,6 +43,7 @@ def init_model():
     args = device_checker(args)
     device = args['device']
     assert device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
+    print(f"Device: {device}")
 
 
     print("Loading model and tokenizer...")
@@ -76,7 +77,7 @@ def format_messages_to_prompt(messages):
 
 # 生成文本的函数
 def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, presence_penalty=0.0,
-                  frequency_penalty=0.0, stop=['\n\nUser', '<endoftext>']):
+                  frequency_penalty=0.0, stop=[b'\n\nUser', b'<|endoftext|>']):
     """
     使用模型生成文本。
 
@@ -152,7 +153,7 @@ def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, pres
 
 # 生成文本的生成器函数
 def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, presence_penalty = 0.0,
-    frequency_penalty = 0.0, stop=['\n\nUser', '<endoftext>']):
+    frequency_penalty = 0.0, stop=[b'\n\nUser', b'<|endoftext|>']):
     encoded_input = tokenizer.encode([prompt])
     token = torch.tensor(encoded_input).long().to(device)
     state = copy.deepcopy(global_state)
@@ -174,7 +175,7 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
         del token
     except GeneratorExit:
         # 客户端断开连接，停止生成并清理资源
-        # clear_cache()
+        clear_cache()
         return
 
     generated_texts = ''
@@ -227,7 +228,7 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
                 yield f"data: {json.dumps(response)}\n\n"
             except GeneratorExit:
                 # 客户端断开连接，停止生成并清理资源
-                # clear_cache()
+                clear_cache()
                 return
             
     if if_max_token:
@@ -304,8 +305,10 @@ def create_completion():
                 }],
                 "usage": usage
             }
-            return jsonify(response)
+            clear_cache()
+            return jsonify(response)      
     except Exception as e:
+        clear_cache()
         return str(e), 500
 
 if __name__ == '__main__':
