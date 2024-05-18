@@ -84,8 +84,7 @@ for epoch in range(epochs):
             x = x[0].to(device)
             y = y[0].to(device)
             data_len = x.shape[1]
-            state = torch.zeros(
-                1, model.state_size[0], model.state_size[1]).to(device)
+            state = model.init_state(batch_size=1).to(device)
             total_length += data_len
             prev_scale_factor = prev_total_length/total_length
             accumulated_loss *= prev_scale_factor
@@ -93,10 +92,10 @@ for epoch in range(epochs):
             for param in model.parameters():
                 if param.grad is not None:
                     param.grad *= prev_scale_factor
-
+            # FIXME: 使用类自带的 forward_parallel_slices 方法
             for i in range((data_len-2)//slice_len+1):
                 start = i*slice_len
-                end = min((i+1)*slice_len, data_len-1)
+                end = min((i+1)*slice_len, data_len)
                 x_i = x[:, start:end]
                 y_i = y[0, start:end]
                 current_slice_len = x_i.shape[1]
