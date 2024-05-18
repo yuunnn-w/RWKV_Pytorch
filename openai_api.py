@@ -7,7 +7,7 @@
 from flask import Flask, request, Response, jsonify
 from src.model import RWKV_RNN
 from src.model_utils import device_checker, device_specific_empty_cache
-from src.sampler import sample_logits
+from src.sampler import sample_logits, apply_penalties
 from src.rwkv_tokenizer import RWKV_TOKENIZER
 import torch
 import time
@@ -37,7 +37,7 @@ def init_model():
         'onnx_opset': '18',  # 非必要不要使用 <18 的值，会引起数值不稳定
         'parrallel': 'True',  # 是否使用并行计算
         # 如果不加载state权重，请置为''
-        'STATE_NAME': './weight/rwkv-x060-chn_single_round_qa-3B-20240511-ctx1024.pth'
+        'STATE_NAME': './weight/rwkv-x060-chn_single_round_qa-3B-20240516-ctx2048.pth'
         # 请务必保证模型权重和State权重对应，这里暂时不做检查
     }
     args = device_checker(args)
@@ -75,7 +75,8 @@ def format_messages_to_prompt(messages):
     return formatted_prompt
 
 # 生成文本的函数
-def generate_text(prompt, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n\nUser','<endoftext>']):
+def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, presence_penalty=0.2,
+                  frequency_penalty=0.2, stop=['\n\nUser', '<endoftext>']):
     """
     使用模型生成文本。
 
@@ -114,22 +115,30 @@ def generate_text(prompt, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n
     
     completion_tokens = 0
     if_max_token = True
-    generated_tokens = ''
+    generated_texts = ''
+    generated_tokens = None
     for step in range(max_tokens):
-        token_sampled = sample_logits(out, temperature, top_p)
+        token_sampled, generated_tokens, _ = apply_penalties(
+            logits=out,
+            presence_penalty=presence_penalty,
+            temperature=temperature,
+            top_p=top_p,
+            frequency_penalty=frequency_penalty,
+            token=generated_tokens,
+        )
         with torch.no_grad():
             out, state = model.forward(token_sampled, state)
         
         # 判断是否达到停止条件
-        last_token = tokenizer.decode(token_sampled.unsqueeze(1).tolist())[0]
+        last_text = tokenizer.decode(token_sampled.unsqueeze(1).cpu().tolist())[0]
+        generated_texts += last_text
         completion_tokens += 1
-        print(last_token, end='')
+        print(last_text, end='')
         
-        generated_tokens += last_token
         
         # 如果末尾含有 stop 列表中的字符串，则停止生成
-        if generated_tokens.endswith(tuple(stop)):
-            generated_tokens = generated_tokens.replace(stop_token, "") # 替换掉终止token
+        if generated_texts.endswith(tuple(stop)):
+            generated_texts = generated_texts.replace(stop_token, "") # 替换掉终止token
             if_max_token = False
             break
             
@@ -137,10 +146,11 @@ def generate_text(prompt, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n
     usage = {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "total_tokens": total_tokens}
     del state
     clear_cache()
-    return generated_tokens, if_max_token, usage
+    return generated_texts, if_max_token, usage
 
 # 生成文本的生成器函数
-def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n\nUser','<endoftext>']):
+def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, presence_penalty = 0.2,
+    frequency_penalty = 0.2, stop=['\n\nUser', '<endoftext>']):
     encoded_input = tokenizer.encode([prompt])
     token = torch.tensor(encoded_input).long().to(device)
     state = copy.deepcopy(global_state)
@@ -160,19 +170,27 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
         del token_temp  # 释放内存
     del token
 
-    generated_tokens = ''
+    generated_texts = ''
+    generated_tokens = None
     completion_tokens = 0
     if_max_token = True
     for step in range(max_tokens):
-        token_sampled = sample_logits(out, temperature, top_p)
+        token_sampled, generated_tokens, _ = apply_penalties(
+            logits=out,
+            presence_penalty=presence_penalty,
+            temperature=temperature,
+            top_p=top_p,
+            frequency_penalty=frequency_penalty,
+            token=generated_tokens,
+        )
         with torch.no_grad():
             out, state = model.forward(token_sampled, state)
         
-        last_token = tokenizer.decode(token_sampled.unsqueeze(1).cpu().tolist())[0]
-        generated_tokens += last_token
+        last_text = tokenizer.decode(token_sampled.unsqueeze(1).cpu().tolist())[0]
+        generated_texts += last_text
         completion_tokens += 1
         
-        if generated_tokens.endswith(tuple(stop)):
+        if generated_texts.endswith(tuple(stop)):
             if_max_token = False
             response = {
                 "object": "chat.completion.chunk",
@@ -191,7 +209,7 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
                 "object": "chat.completion.chunk",
                 "model": "rwkv",
                 "choices": [{
-                    "delta": {"content": last_token},
+                    "delta": {"content": last_text},
                     "index": 0,
                     "finish_reason": None
                 }]
@@ -235,6 +253,8 @@ def create_completion():
         stream = data.get('stream', True)
         temperature = data.get('temperature', 1.5)
         top_p = data.get('top_p', 0.1)
+        presence_penalty = data.get('presence_penalty', 0.2)
+        frequency_penalty = data.get('frequency_penalty', 0.2)
         max_tokens = data.get('max_tokens', 512)
         stop = data.get('stop', ['\n\nUser'])
 
@@ -248,9 +268,11 @@ def create_completion():
                     yield event
             return Response(generate(), content_type='text/event-stream')
             """
-            return Response(generate_text_stream(prompt, temperature=temperature, top_p=top_p, max_tokens=max_tokens, stop=stop), content_type='text/event-stream')
+            return Response(generate_text_stream(prompt, temperature=temperature, top_p=top_p, presence_penalty=presence_penalty,
+                                                 frequency_penalty=frequency_penalty, max_tokens=max_tokens, stop=stop), content_type='text/event-stream')
         else:
-            completion, if_max_token, usage = generate_text(prompt, temperature=temperature, top_p=top_p, max_tokens=max_tokens, stop=stop)
+            completion, if_max_token, usage = generate_text(prompt, temperature=temperature, top_p=top_p, presence_penalty=presence_penalty,
+                                                 frequency_penalty=frequency_penalty, max_tokens=max_tokens, stop=stop)
             finish_reason = "stop" if if_max_token else "length"
             unique_id = str(uuid.uuid4())
             current_timestamp = int(time.time())

@@ -1,5 +1,8 @@
 import torch
+import torch.nn.functional as F
 import numpy as np
+from collections import defaultdict
+from typing import Optional, Tuple
 
 def sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.8) -> torch.Tensor:
     """
@@ -42,6 +45,35 @@ def sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.
         torch.exp(log_probabilities), num_samples=1).squeeze(1)
 
     return sampled_index
+
+
+def apply_penalties(logits: torch.Tensor, presence_penalty: float, temperature: float, top_p: float, frequency_penalty: float, token: Optional[torch.Tensor] = None, freq_dict: Optional[defaultdict] = None) -> Tuple[torch.Tensor, torch.Tensor, defaultdict]:
+    """
+    Apply penalties to the logits tensor and sample from it.
+    """
+    if freq_dict is None:
+        freq_dict = defaultdict(int)
+
+    if token is not None:
+        # 创建一个mask,标识token是否已经出现在生成的序列中
+        mask = torch.zeros_like(logits, dtype=torch.bool).to(logits.device)
+        mask[0][token.tolist()] = True
+
+        # 对已出现的token施加存在惩罚
+        logits = torch.where(mask, logits + presence_penalty, logits)
+
+        # 根据token的出现频率施加频率惩罚
+        freq_penalties = torch.tensor([freq_dict[i] for i in range(len(logits))], dtype=logits.dtype, device=logits.device)
+        logits += frequency_penalty * torch.sqrt(freq_penalties)
+
+    token_sampled = sample_logits(logits, temperature=temperature, top_p=top_p)
+    
+    if token is not None:
+        token = torch.cat((token, token_sampled), 0)
+    else:
+        token = token_sampled
+
+    return token_sampled, token, freq_dict
 
 
 def sample_logits_numpy(out: np.ndarray, temperature: float = 1.0, top_p: float = 0.8) -> np.ndarray:
@@ -93,3 +125,29 @@ def sample_logits_numpy(out: np.ndarray, temperature: float = 1.0, top_p: float 
         lambda p: np.random.choice(len(p), p=p), -1, probabilities)
 
     return sampled_index
+
+
+def apply_penalties_numpy(logits: np.ndarray, presence_penalty: float, temperature: float, top_p: float, frequency_penalty: float, token: Optional[np.ndarray] = None, freq_dict: Optional[defaultdict] = None) -> Tuple[np.ndarray, np.ndarray, defaultdict]:
+    if freq_dict is None:
+        freq_dict = defaultdict(int)
+
+    if token is not None:
+        # 创建一个mask,标识token是否已经出现在生成的序列中
+        mask = np.zeros_like(logits, dtype=bool)
+        mask[0][token.tolist()] = True
+
+        # 对已出现的token施加存在惩罚
+        logits = np.where(mask, logits + presence_penalty, logits)
+
+        # 根据token的出现频率施加频率惩罚
+        freq_penalties = np.array([freq_dict[i] for i in range(len(logits))], dtype=logits.dtype)
+        logits += frequency_penalty * np.sqrt(freq_penalties)
+
+    token_sampled = sample_logits_numpy(logits, temperature=temperature, top_p=top_p)
+    
+    if token is not None:
+        token = np.concatenate((token, token_sampled), axis=0)
+    else:
+        token = token_sampled
+
+    return token_sampled, token, freq_dict
