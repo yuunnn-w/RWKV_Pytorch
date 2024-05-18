@@ -2,14 +2,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Tuple,Dict
+from typing import Tuple,Dict,List,Union
 from simple_parsing.helpers import Serializable
 from dataclasses import dataclass
+from model_utils import RWKV_x060
 
 @dataclass
 class ModelArgs(Serializable):
     MODEL_NAME: str = './weight/0.1-1/rwkv-final'
-    DATASET_PATH: str = '/home/aknife/code/mistral-src-main/data/medical_dialog_test.jsonl'
+    DATASET_PATH: str = 'data/medical_dialog_test.jsonl'
     TOKENIZER_PATH: str = "asset/rwkv_vocab_v20230424.txt"
     device: str = 'cuda'
     vocab_size: int = 65536
@@ -20,6 +21,7 @@ class ModelArgs(Serializable):
     batch_size: int = 4
     token_limit: int = 128
     onnx_opset: int = 18
+    dtype: Union[List[str],str] = 'float32'
 
 
 class RWKV_Block(nn.Module):
@@ -31,12 +33,13 @@ class RWKV_Block(nn.Module):
         n_embd (int): 嵌入维度。
         n_head (int): 头数。
     """
-    def __init__(self, block_w: dict, n_embd: int, n_head: int, onnx_opset = 16):
+    def __init__(self, block_w: dict, n_embd: int, n_head: int, onnx_opset = 16, datatype = torch.float32):
         super().__init__()
         self.n_embd = n_embd
         self.n_head = n_head
         self.head_size = n_embd // n_head
         self.onnx_opset = onnx_opset
+        self.datatype = datatype
 
         # 初始化层归一化
         if self.onnx_opset >= 17:
@@ -179,7 +182,7 @@ class RWKV_Block(nn.Module):
         Batch, L, _ = x.shape
         i0 = (2 + self.head_size) * i + 0
 
-        sx_lerp = torch.empty(x.shape, device=x.device)
+        sx_lerp = torch.empty(x.shape, dtype=self.datatype, device=x.device)
         sx_lerp[:, 0] = state[:, i0] - x[:, 0]
 
         # for l in range(1, L):
@@ -268,7 +271,7 @@ class RWKV_Block(nn.Module):
         batch_size, L, H, S = x.size(0), x.size(1), self.n_head, self.head_size
         i1 = (2 + S) * i + 1
         # 初始化结果张量
-        sx_lerp = torch.empty(x.shape, device=x.device)
+        sx_lerp = torch.empty(x.shape, dtype=self.datatype, device=x.device)
 
         # 计算初始插值
         sx_lerp[:, 0] = state[:, i1] - x[:, 0]
@@ -305,7 +308,7 @@ class RWKV_Block(nn.Module):
         s = state[:, (2+S)*i+2:(2+S)*(i+1)].view(batch_size, H, S, S)
         a = k @ v # a: [batch_size, L, H, S, S]
 
-        state_s = torch.empty(batch_size, L, H, S, S, device=x.device) #初始化state_s的结果张量
+        state_s = torch.empty(batch_size, L, H, S, S, dtype=self.datatype, device=x.device) #初始化state_s的结果张量
         state_s[:, 0] = s #把第一个a_{t-1, j}赋值给state_s
 
 
@@ -383,6 +386,12 @@ class RWKV_RNN(nn.Module):
             self.onnx_opset = 16 #默认是最低的，op17版本才支持LayerNorm算子，op18版本才支持GroupNorm算子
         print('onnx opset ', self.onnx_opset)
         self.eval()
+        if isinstance(args.dtype,list):
+            self.datatype = getattr(torch,args.dtype[args.rank_id])
+        elif isinstance(args.dtype,str):
+            self.datatype = getattr(torch,args.dtype)
+        else:
+            self.datatype = torch.float32
         
         
 
@@ -412,10 +421,10 @@ class RWKV_RNN(nn.Module):
         else:
             assert w is not None
         
-        # 将所有权重转换为float32
+        # 将所有权重转换为float32/float16
         self.num_layer = 0
         for k in w.keys():
-            w[k] = w[k].float()
+            w[k] = w[k].to(self.datatype)
             if '.time_' in k: w[k] = w[k].squeeze()
             if '.time_faaaa' in k: w[k] = w[k].unsqueeze(-1)
             if "blocks" in k: self.num_layer = max(self.num_layer, int(k.split(".")[1]))
@@ -453,7 +462,7 @@ class RWKV_RNN(nn.Module):
         for i in range(block_start,block_end):
             # 提取当前块的权重
             block_w = {k[len(f'blocks.{i}.'):]: v for k, v in w.items() if f'blocks.{i}.' in k}
-            self.blocks[str(i)] = RWKV_Block(block_w, self.n_embd, self.n_head, self.onnx_opset)
+            self.blocks[str(i)] = RWKV_Block(block_w, self.n_embd, self.n_head, self.onnx_opset, self.datatype)
         self.blocks = nn.ModuleDict(self.blocks)
 
         if self.args.next_id is None:

@@ -110,7 +110,7 @@ def main(args:ModelArgs):
 def init_process(args:ModelArgs):
     """ Initialize the distributed environment. """
     os.environ['MASTER_ADDR'] = '127.0.0.1'
-    os.environ['MASTER_PORT'] = '29500'
+    # os.environ['MASTER_PORT'] = '29500' # 一机多卡请注释这行
     torch.distributed.init_process_group(backend='nccl')
     torch.cuda.set_device(torch.distributed.get_rank())
     args.rank_id = torch.distributed.get_rank()
