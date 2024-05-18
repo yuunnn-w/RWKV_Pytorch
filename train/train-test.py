@@ -53,6 +53,7 @@ args = {
 args = device_checker(args)
 device = args['device']
 assert device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
+print(f"Device: {device}")
 
 
 device = torch.device(args['device'])

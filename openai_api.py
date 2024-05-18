@@ -5,6 +5,7 @@
 # 参数基本符合OpenAI的接口，用任意OpenAI客户端均可，无需填写api key和model参数
 ###############################################################
 from flask import Flask, request, Response, jsonify
+from flask import stream_with_context
 from src.model import RWKV_RNN
 from src.model_utils import device_checker, device_specific_empty_cache
 from src.sampler import sample_logits, apply_penalties
@@ -77,7 +78,7 @@ def format_messages_to_prompt(messages):
 
 # 生成文本的函数
 def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, presence_penalty=0.0,
-                  frequency_penalty=0.0, stop=[b'\n\nUser', b'<|endoftext|>']):
+                  frequency_penalty=0.0, stop=['\n\nUser', '<|endoftext|>']):
     """
     使用模型生成文本。
 
@@ -153,7 +154,7 @@ def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, pres
 
 # 生成文本的生成器函数
 def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, presence_penalty = 0.0,
-    frequency_penalty = 0.0, stop=[b'\n\nUser', b'<|endoftext|>']):
+    frequency_penalty = 0.0, stop=['\n\nUser', '<|endoftext|>']):
     encoded_input = tokenizer.encode([prompt])
     token = torch.tensor(encoded_input).long().to(device)
     state = copy.deepcopy(global_state)
@@ -270,8 +271,8 @@ def create_completion():
         top_p = data.get('top_p', 0.1)
         presence_penalty = data.get('presence_penalty', 0.0)
         frequency_penalty = data.get('frequency_penalty', 0.0)
-        max_tokens = data.get('max_tokens', 512)
-        stop = data.get('stop', ['\n\nUser'])
+        max_tokens = data.get('max_tokens', 2048)
+        stop = data.get('stop', ['\n\nUser', '<|endoftext|>'])
 
         prompt = format_messages_to_prompt(messages)
         
@@ -283,8 +284,11 @@ def create_completion():
                     yield event
             return Response(generate(), content_type='text/event-stream')
             """
-            return Response(generate_text_stream(prompt, temperature=temperature, top_p=top_p, presence_penalty=presence_penalty,
-                                                 frequency_penalty=frequency_penalty, max_tokens=max_tokens, stop=stop), content_type='text/event-stream')
+            response = Response(stream_with_context(generate_text_stream(prompt, temperature=temperature, top_p=top_p, presence_penalty=presence_penalty,
+                                                 frequency_penalty=frequency_penalty, max_tokens=max_tokens, stop=stop)), 
+                                content_type='text/event-stream')
+            response.timeout = None  # 设置超时时间为无限制
+            return response
         else:
             completion, if_max_token, usage = generate_text(prompt, temperature=temperature, top_p=top_p, presence_penalty=presence_penalty,
                                                  frequency_penalty=frequency_penalty, max_tokens=max_tokens, stop=stop)
