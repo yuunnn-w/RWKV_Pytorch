@@ -413,7 +413,7 @@ class RWKV_RNN(nn.Module):
         if load_from_file:
             if not self.args['MODEL_NAME'].endswith('.pth'):
                 self.args['MODEL_NAME'] += '.pth'
-            w = torch.load(self.args['MODEL_NAME'], map_location=self.args['device'])
+            w = torch.load(self.args['MODEL_NAME'], map_location="cpu")
         else:
             assert w is not None
         
@@ -529,6 +529,47 @@ class RWKV_RNN(nn.Module):
         x = self.head(x)
         return x, state
     
+    def forward_parallel_slices(self, token: torch.Tensor, state: torch.Tensor, slice_len: int = 64) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        模型的分段并行前向传播，减少显存/内存使用。
+        Args:
+            token (torch.Tensor): 输入的令牌张量。[Batch_size, L]
+            state (torch.Tensor): 隐藏状态张量。[Batch_size, State_size, N_embd]
+        Returns:
+            torch.Tensor: 模型输出。
+        """
+        data_len = token.shape[1]
+        for i in range((data_len-2)//slice_len+1):
+            start = i*slice_len
+            end = min((i+1)*slice_len, data_len)
+            token_i = token[:, start:end]
+            token_out, state_new = self.forward_parallel(token_i, state)
+            state = state_new.detach()  # 使用 detach() 截断梯度传播, 训练使用
+        
+        return token_out, state
+
+    def init_state(self, batch_size: int) -> torch.Tensor:
+        """
+        初始化状态。
+        rgs:
+            batch_size (int): 批次大小。
+        Returns:
+            state (torch.Tensor): 隐藏状态张量。[Batch_size, State_size, N_embd], device="cpu"
+        """
+        # 初始化状态
+        state = torch.zeros(batch_size, self.state_size[0], self.state_size[1])
+
+        # 这里把训练好的state加载进去
+        if 'STATE_NAME' in self.args and self.args['STATE_NAME'] != '':
+            STATE = torch.load(self.args['STATE_NAME'].replace(
+                ".pth", "")+'.pth', map_location=torch.device("cpu"))
+            head_size = self.head_size
+            for i, (key, value) in enumerate(STATE.items()):
+                state[:, ((2 + head_size)*i + 2):((2 + head_size)*(i + 1)),
+                      :] = value.contiguous().permute(0, 2, 1).reshape(head_size, -1)
+
+        return state
+
     def save_model(self, model_path):
         """
         将训练后的模型保存为 .pth 文件。

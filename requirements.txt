@@ -7,3 +7,4 @@ icecream
 Flask
 tqdm
 optimum
+gradio
