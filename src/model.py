@@ -601,7 +601,7 @@ class RWKV_RNN(nn.Module):
         for i in range(1584 // (2 + head_size)):
             start = (2 + head_size) * i + 2
             end = (2 + head_size) * (i + 1)
-            layer_state = state[:, start:end, :]
+            layer_state = state[:, start:end, :].detach()  # 使用 detach() 创建一个新的张量
             batch_size, _, _ = layer_state.size()
             assert batch_size == 1, "保存状态时批次大小必须为1, 其他时候未验证" # 我甚至不知道怎么写 :(
             STATE[f'blocks.{i}.att.time_state'] = layer_state.contiguous().view(n_head, head_size, head_size).permute(0, 1, 2)
