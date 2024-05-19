@@ -103,7 +103,7 @@ def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, pres
     
     if args['parrallel'] == "True":
         with torch.no_grad():
-            token_out, state = model.forward_parallel_slices(token, state, slice_len=1024)
+            token_out, state = model.forward_parallel_slices(token, state, slice_len=512)
             out = token_out[:, -1]
     else:
         # 预填充状态
@@ -164,7 +164,7 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
     try:
         if args['parrallel'] == "True":
             with torch.no_grad():
-                token_out, state = model.forward_parallel_slices(token, state, slice_len=1024)
+                token_out, state = model.forward_parallel_slices(token, state, slice_len=512)
                 out = token_out[:, -1]  # 取最后一个生成的token
         else:
         # 预填充状态
