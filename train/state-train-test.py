@@ -45,11 +45,12 @@ class TextDataset(Dataset):
 # 初始化模型参数
 args = {
     # 模型文件的名字，pth结尾的权重文件。
-    'MODEL_NAME': './weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth',
+    'MODEL_NAME': './weight/RWKV-x060-World-3B-v2.1-20240417-ctx4096.pth',
     'vocab_size': 65536  # 词表大小，不要乱改
     , 'device': "cpu"    # ,'device': "cuda"
     , 'onnx_opset': 16,
-    'dataformat': 'bf16'
+    'dataformat': 'bf16',
+    'STATE_NAME': 'weight/rwkv-x060-chn_single_round_qa-3B-20240516-ctx2048.pth', # 如果不加载state权重，请置为''
 }
 args = device_checker(args)
 device = args['device']
@@ -64,16 +65,19 @@ model = RWKV_RNN(args).to(device)
 tokenizer = RWKV_TOKENIZER("asset/rwkv_vocab_v20230424.txt")
 print("Done.")
 
-file_path = 'data/demo.jsonl'  # 替换为你的文本文件路径
+file_path = 'data/unknow_zh_38k_continue_1.jsonl'  # 替换为你的文本文件路径
 save_path = "./weight/rwkv-test-epoch-1.pth"
 # 设置续写的初始字符串和参数
-optimizer = torch.optim.Adam(model.parameters())
+
 criterion = nn.CrossEntropyLoss()
-slice_len = 8
+slice_len = 32
 dataset = TextDataset(file_path, tokenizer)
 dataloader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=4)
 accumulation_steps = 10  # 每 10 步更新一次参数
 epochs = 1
+initial_state = model.init_state(batch_size=1).to(device)
+initial_state.requires_grad = True
+optimizer = torch.optim.Adam([initial_state])
 
 # with torch.autograd.set_detect_anomaly(True): # 检测梯度异常
 for epoch in range(epochs):
@@ -86,7 +90,7 @@ for epoch in range(epochs):
             x = x[0].to(device)
             y = y[0].to(device)
             data_len = x.shape[1]
-            state = model.init_state(batch_size=1).to(device)
+            state = initial_state.clone()  # 直接使用原始的 initial_state
             total_length += data_len
             prev_scale_factor = prev_total_length/total_length
             accumulated_loss *= prev_scale_factor
@@ -118,4 +122,5 @@ for epoch in range(epochs):
 
             tbar.set_postfix(avg_loss=accumulated_loss)
 
-model.save_model(save_path)
+# 保存训练好的 state
+model.save_state(initial_state, "./weight/rwkv-trained-state.pth")
