@@ -38,8 +38,9 @@ def init_model():
         'onnx_opset': '18',  # 非必要不要使用 <18 的值，会引起数值不稳定
         'parrallel': 'True',  # 是否使用并行计算
         # 如果不加载state权重，请置为''
-        'STATE_NAME': './weight/rwkv-x060-chn_single_round_qa-3B-20240516-ctx2048.pth'
+        'STATE_NAME': './weight/rwkv-x060-chn_single_round_qa-3B-20240516-ctx2048.pth',
         # 请务必保证模型权重和State权重对应，这里暂时不做检查
+        'dataformat': 'bf16'
     }
     args = device_checker(args)
     device = args['device']

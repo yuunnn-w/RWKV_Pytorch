@@ -584,6 +584,30 @@ class RWKV_RNN(nn.Module):
 
         return state
 
+    def save_state(self, state: torch.Tensor, filename: str):
+        """
+        保存隐藏状态张量到文件。
+
+        Args:
+            state (torch.Tensor): 隐藏状态张量。[Batch_size, State_size, N_embd]
+            filename (str): 保存文件的路径和名称。
+
+        Returns:
+            None
+        """
+        head_size = self.head_size
+        n_head = self.n_head
+        STATE = {}
+        for i in range(1584 // (2 + head_size)):
+                start = (2 + head_size) * i + 2
+                end = (2 + head_size) * (i + 1)
+                layer_state = state[:, start:end, :]
+                batch_size, _, _ = layer_state.size()
+                assert batch_size == 1, "保存状态时批次大小必须为1, 其他时候未验证" # 我甚至不知道怎么写 :(
+                STATE[f'blocks.{i}.att.time_state'] = layer_state.contiguous().view(n_head, head_size, head_size).permute(0, 1, 2)
+
+        torch.save(STATE, filename)
+    
     def save_model(self, model_path, bf16=True):
         """
         将训练后的模型保存为 .pth 文件。
