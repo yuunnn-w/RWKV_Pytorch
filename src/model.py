@@ -94,7 +94,7 @@ class RWKV_Block(nn.Module):
         else:
             self.att_group_norm_weight = nn.Parameter(block_w['att.ln_x.weight'])
             self.att_group_norm_bias = nn.Parameter(block_w['att.ln_x.bias'])
-
+            
         # 初始化前馈参数
         self.ffn_time_maa_k = nn.Parameter(block_w['ffn.time_maa_k'])
         self.ffn_time_maa_r = nn.Parameter(block_w['ffn.time_maa_r'])
@@ -185,7 +185,7 @@ class RWKV_Block(nn.Module):
         """
         i0 = (2 + self.head_size) * i + 0
 
-        sx_lerp = torch.empty(x.shape, device=x.device)
+        sx_lerp = torch.empty_like(x)
         sx_lerp[:, 0] = state[:, i0] - x[:, 0]
 
         # for l in range(1, L):
@@ -266,7 +266,7 @@ class RWKV_Block(nn.Module):
         batch_size, L, H, S = x.size(0), x.size(1), self.n_head, self.head_size
         i1 = (2 + S) * i + 1
         # 初始化结果张量
-        sx_lerp = torch.empty(x.shape, device=x.device)
+        sx_lerp = torch.empty_like(x)
 
         # 计算初始插值
         sx_lerp[:, 0] = state[:, i1] - x[:, 0]
@@ -305,7 +305,7 @@ class RWKV_Block(nn.Module):
         s = state[:, (2+S)*i+2:(2+S)*(i+1)].view(batch_size, H, S, S)
         a = k @ v # a: [batch_size, L, H, S, S]
 
-        state_s = torch.empty(batch_size, L, H, S, S, device=x.device) #初始化state_s的结果张量
+        state_s = torch.zeros(batch_size, L, H, S, S, dtype=x.dtype, device=x.device) #初始化state_s的结果张量
         state_s[:, 0] = s #把第一个a_{t-1, j}赋值给state_s
         
         for l in range(L-1):
@@ -380,6 +380,8 @@ class RWKV_RNN(nn.Module):
         except:
             self.onnx_opset = 16 #默认是最低的，op17版本才支持LayerNorm算子，op18版本才支持GroupNorm算子
         print('onnx opset ', self.onnx_opset)
+        self.dataformat = self.args.get('dataformat', 'fp32')
+        assert self.dataformat in ['fp32', 'fp16', 'bf16']
         
         # 加载权重
         if 'init_model' in self.args and self.args['init_model'] == True:
@@ -420,7 +422,12 @@ class RWKV_RNN(nn.Module):
         # 将所有权重转换为float32
         self.num_layer = 0
         for k in w.keys():
-            w[k] = w[k].float()
+            if self.dataformat == 'fp32':
+                w[k] = w[k].float()
+            elif self.dataformat == 'fp16':
+                w[k] = w[k].half()
+            elif self.dataformat == 'bf16':
+                w[k] = w[k].bfloat16()
             if '.time_' in k: w[k] = w[k].squeeze()
             if '.time_faaaa' in k: w[k] = w[k].unsqueeze(-1)
             if "blocks" in k: self.num_layer = max(self.num_layer, int(k.split(".")[1]))
@@ -567,6 +574,13 @@ class RWKV_RNN(nn.Module):
             for i, (key, value) in enumerate(STATE.items()):
                 state[:, ((2 + head_size)*i + 2):((2 + head_size)*(i + 1)),
                       :] = value.contiguous().permute(0, 2, 1).reshape(head_size, -1)
+            
+            if self.dataformat == 'fp16':
+                state = state.half()
+            elif self.dataformat == 'bf16':
+                state = state.bfloat16()
+            elif self.dataformat == 'fp32':
+                state = state.float()
 
         return state
 
