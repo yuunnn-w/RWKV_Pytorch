@@ -13,9 +13,10 @@ from src.model import RWKV_RNN
 from src.model_utils import device_checker
 from src.sampler import sample_logits
 from src.rwkv_tokenizer import RWKV_TOKENIZER
+import gc
 
 if __name__ == '__main__':
-    opsets = [18]
+    opsets = [18, 17, 16]
     results = []
     for i in opsets:
 
@@ -29,7 +30,7 @@ if __name__ == '__main__':
         }
 
 
-        args = device_checker(args)
+        # args = device_checker(args)
         device = args['device']
         assert device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
     
@@ -50,7 +51,34 @@ if __name__ == '__main__':
         for param, param1 in zip(model.parameters(), model1.parameters()):
             if not torch.allclose(param, param1):
                 print("Error: Model parameters are not equal.")
+                print(model.parameters(), model1.parameters())
                 break
         else:
             print("Model parameters are equal.")
+
+        # 找出权重字典中的不一致
+        model = torch.load(args['MODEL_NAME'].replace('.pth','')+'.pth', map_location='cpu')
+        model1 = torch.load(save_path, map_location='cpu')
+        inconsistencies = []
+        for key in model.keys():
+            if key not in model1:
+                inconsistencies.append(f"Key '{key}' is missing in dictionary b")
+            elif model[key].shape != model1[key].shape:
+                inconsistencies.append(f"Shape mismatch for key '{key}': {model[key].shape} vs {model1[key].shape}")
+            elif not torch.allclose(model[key], model1[key], rtol=1e-05, atol=1e-08, equal_nan=False):
+                inconsistencies.append(f"Value mismatch for key '{key}'")
+
+        for key in model1.keys():
+            if key not in model:
+                inconsistencies.append(f"Key '{key}' is missing in dictionary a")
+
+        # 打印不一致的地方
+        if len(inconsistencies) > 0:
+            print("Inconsistencies found:")
+            for inconsistency in inconsistencies:
+                print(inconsistency)
+        else:
+            print("The two dictionaries are consistent.")
     
+        del model, model1
+        gc.collect()
