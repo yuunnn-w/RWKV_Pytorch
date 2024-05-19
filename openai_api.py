@@ -38,11 +38,11 @@ def init_model():
         'onnx_opset': '18',  # 非必要不要使用 <18 的值，会引起数值不稳定
         'parrallel': 'True',  # 是否使用并行计算
         # 如果不加载state权重，请置为''
-        'STATE_NAME': './weight/rwkv-x060-chn_single_round_qa-3B-20240516-ctx2048.pth',
+        'STATE_NAME': './weight/rwkv-trained-latest.pth',
         # 请务必保证模型权重和State权重对应，这里暂时不做检查
-        'dataformat': 'bf16'
+        'dataformat': 'fp32'
     }
-    args = device_checker(args)
+    # args = device_checker(args)
     device = args['device']
     assert device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
     print(f"Device: {device}")
@@ -97,7 +97,7 @@ def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, pres
     # 设置续写的初始字符串和参数
     encoded_input = tokenizer.encode([prompt])
     token = torch.tensor(encoded_input).long().to(device)
-    state = copy.deepcopy(global_state)
+    state = global_state.clone().detach()
     state = state.to(device)
     prompt_tokens = len(encoded_input[0])
     stop_token = tokenizer.encode(stop)[0]
@@ -158,7 +158,7 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
     frequency_penalty = 0.0, stop=['\n\nUser', '<|endoftext|>']):
     encoded_input = tokenizer.encode([prompt])
     token = torch.tensor(encoded_input).long().to(device)
-    state = copy.deepcopy(global_state)
+    state = global_state.clone().detach()
     state = state.to(device)
     prompt_tokens = len(encoded_input[0])
 
