@@ -584,7 +584,7 @@ class RWKV_RNN(nn.Module):
 
         return state
 
-    def save_state(self, state: torch.Tensor, filename: str):
+    def save_state(self, state: torch.Tensor, filename: str, bf16=True):
         """
         保存隐藏状态张量到文件。
 
@@ -599,13 +599,19 @@ class RWKV_RNN(nn.Module):
         n_head = self.n_head
         STATE = {}
         for i in range(1584 // (2 + head_size)):
-                start = (2 + head_size) * i + 2
-                end = (2 + head_size) * (i + 1)
-                layer_state = state[:, start:end, :]
-                batch_size, _, _ = layer_state.size()
-                assert batch_size == 1, "保存状态时批次大小必须为1, 其他时候未验证" # 我甚至不知道怎么写 :(
-                STATE[f'blocks.{i}.att.time_state'] = layer_state.contiguous().view(n_head, head_size, head_size).permute(0, 1, 2)
+            start = (2 + head_size) * i + 2
+            end = (2 + head_size) * (i + 1)
+            layer_state = state[:, start:end, :]
+            batch_size, _, _ = layer_state.size()
+            assert batch_size == 1, "保存状态时批次大小必须为1, 其他时候未验证" # 我甚至不知道怎么写 :(
+            STATE[f'blocks.{i}.att.time_state'] = layer_state.contiguous().view(n_head, head_size, head_size).permute(0, 1, 2)
 
+        if bf16 == True:
+            for key in STATE.keys():
+                STATE[key] = STATE[key].bfloat16()
+        else:
+            for key in STATE.keys():
+                STATE[key] = STATE[key].float()
         torch.save(STATE, filename)
     
     def save_model(self, model_path, bf16=True):
@@ -713,6 +719,9 @@ class RWKV_RNN(nn.Module):
         if bf16 == True:
             for key in state_dict.keys():
                 state_dict[key] = state_dict[key].bfloat16()
+        else:
+            for key in state_dict.keys():
+                state_dict[key] = state_dict[key].float()
         # 保存模型权重到 .pth 文件
         if not model_path.endswith('.pth'):
             model_path += '.pth'
