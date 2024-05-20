@@ -12,10 +12,10 @@ from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 from src.rwkv_tokenizer import RWKV_TOKENIZER
-from src.model_utils import device_checker
+from src.model_utils import device_checker, device_specific_empty_cache
 from src.model import RWKV_RNN
 import torch
-
+from torch.optim.lr_scheduler import LinearLR
 
 
 
@@ -50,7 +50,7 @@ args = {
     , 'device': "cpu"    # ,'device': "cuda"
     , 'onnx_opset': 16,
     'dataformat': 'bf16',
-    'STATE_NAME': 'weight/rwkv-x060-chn_single_round_qa-3B-20240516-ctx2048.pth', # 如果不加载state权重，请置为''
+    'STATE_NAME': 'weight/rwkv-trained-latest.pth', # 如果不加载state权重，请置为''
 }
 args = device_checker(args)
 device = args['device']
@@ -73,12 +73,19 @@ criterion = nn.CrossEntropyLoss()
 slice_len = 32
 dataset = TextDataset(file_path, tokenizer)
 dataloader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=4)
-accumulation_steps = 10  # 每 10 步更新一次参数
+accumulation_steps = 5  # 每 10 步更新一次参数
 epochs = 1
-initial_state = model.init_state(batch_size=1).to(device)
+initial_state = model.init_state(batch_size=1).detach().to(device)
 initial_state.requires_grad = True
-optimizer = torch.optim.Adam([initial_state])
+# optimizer = torch.optim.Adam([initial_state])
+lr_init = 1
+lr_final = 0.01
+warmup_steps = 1000
+total_steps =  len(dataloader) * epochs
+optimizer = torch.optim.AdamW([initial_state], lr=lr_init)
+scheduler = LinearLR(optimizer, start_factor=lr_init, end_factor=lr_final, total_iters=warmup_steps)
 
+model = torch.compile(model)
 # with torch.autograd.set_detect_anomaly(True): # 检测梯度异常
 for epoch in range(epochs):
     accumulated_loss = 0
@@ -117,10 +124,14 @@ for epoch in range(epochs):
             if step % accumulation_steps == 0 or step == len(dataloader):
                 optimizer.step()
                 optimizer.zero_grad()
+                # 更新学习率
+                if step <= warmup_steps:
+                    scheduler.step()
                 total_length = 0
                 prev_total_length = 0
-
-            tbar.set_postfix(avg_loss=accumulated_loss)
+                device_specific_empty_cache(args)
+                model.save_state(initial_state, "./weight/rwkv-trained-latest.pth")
+            tbar.set_postfix(avg_loss=accumulated_loss, lr=optimizer.param_groups[0]['lr'])
 
 # 保存训练好的 state
 model.save_state(initial_state, "./weight/rwkv-trained-state.pth")

@@ -98,7 +98,7 @@ def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, pres
     encoded_input = tokenizer.encode([prompt])
     token = torch.tensor(encoded_input).long().to(device)
     state = global_state.clone().detach()
-    state = state.to(device)
+    state = model.init_state(1).to(device)
     prompt_tokens = len(encoded_input[0])
     stop_token = tokenizer.encode(stop)[0]
     
