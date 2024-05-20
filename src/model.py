@@ -575,12 +575,12 @@ class RWKV_RNN(nn.Module):
                 state[:, ((2 + head_size)*i + 2):((2 + head_size)*(i + 1)),
                       :] = value.contiguous().permute(0, 2, 1).reshape(head_size, -1)
             
-            if self.dataformat == 'fp16':
-                state = state.half()
-            elif self.dataformat == 'bf16':
-                state = state.bfloat16()
-            elif self.dataformat == 'fp32':
-                state = state.float()
+        if self.dataformat == 'fp16':
+            state = state.half()
+        elif self.dataformat == 'bf16':
+            state = state.bfloat16()
+        elif self.dataformat == 'fp32':
+            state = state.float()
 
         return state
 
