@@ -102,9 +102,9 @@ for epoch in range(epochs):
             prev_scale_factor = prev_total_length/total_length
             accumulated_loss *= prev_scale_factor
             # 根据序列的总长度对梯度进行规范化
-            for param in model.parameters():
-                if param.grad is not None:
-                    param.grad *= prev_scale_factor
+            param = initial_state
+            if param.grad is not None:
+                param.grad *= prev_scale_factor
             # FIXME: 使用类自带的 forward_parallel_slices 方法
             for i in range((data_len-2)//slice_len+1):
                 start = i*slice_len
