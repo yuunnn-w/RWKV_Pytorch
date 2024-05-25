@@ -1,52 +1,49 @@
-import time
+import time,json
 import os
 import torch
-from src.model import RWKV_RNN
+from src.model import RWKV_RNN, ModelArgs
 from src.model_utils import device_checker
 from src.sampler import sample_logits
 from src.rwkv_tokenizer import RWKV_TOKENIZER
 if __name__ == '__main__':
-    args = {
-        'MODEL_NAME': 'weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096', #模型文件的名字，pth结尾的权重文件。
-        'vocab_size': 65536, #词表大小
-        'device': "cpu", # 运行设备，可选'cpu','cuda','musa','npu'
-        'onnx_opset': '18', # 非必要不要使用 <18 的值，会引起数值不稳定
-        "parrallel": "True", # 是否使用并行计算
-    }
-    
-    
-    args = device_checker(args)
-    device = args['device']
-    assert device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
+    # 初始化模型参数
+    with open("train/params.json", "r") as f:
+        args:ModelArgs = ModelArgs.from_dict(json.load(f))
+        args = device_checker(args)
+        assert args.device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
     
     # 加载模型和分词器
     print("Loading model and tokenizer...")
-    model = RWKV_RNN(args).to(device)
-    tokenizer = RWKV_TOKENIZER("asset/rwkv_vocab_v20230424.txt")
+    model = RWKV_RNN(args).to(args.device)
+    tokenizer = RWKV_TOKENIZER(args.TOKENIZER_PATH)
     print(model)
     print("Done.")
-    
+
     # 设置续写的初始字符串和参数
     initial_string = "Elon Musk has"
-    batch_size = 30
-    TEMPERATURE = 1.1  # 温度参数
+    batch_size = 3
+    TEMPERATURE = 1.0  # 温度参数
     TOP_P = 0.1  # Top-p采样参数
-    LENGTH_PER_TRIAL = 50  # 生成的长度
-    
+    LENGTH_PER_TRIAL = 100  # 生成的长度
     # 编码初始字符串
     encoded_input = tokenizer.encode([initial_string] * batch_size)
-    token = torch.tensor(encoded_input).long().to(device)  # 转置以匹配模型输入的形状
+    token = torch.tensor(encoded_input).long().to(args.device)  # 转置以匹配模型输入的形状
 
     # 初始化状态
-    state = torch.zeros(batch_size, model.state_size[0], model.state_size[1]).to(device)
+    state = torch.zeros(batch_size, model.state_size[0], model.state_size[1]).to(args.device)
+    if args.STATE_NAME != '':
+        STATE = torch.load(args.STATE_NAME + '.pth', map_location=torch.device(args.device))
+        n_head, head_size = model.n_head, model.head_size
+        for i, (key, value) in enumerate(STATE.items()):
+            state[:, ((2 + head_size) * i + 2):((2 + head_size) * (i + 1)), :] = value.contiguous().permute(0, 2,1).reshape(head_size, -1)
     
-    if args['parrallel'] == "True":
+    if args.parallel:
         with torch.no_grad():
             token_out, state_out = model.forward_parallel(token, state)
             out = token_out[:, -1] # 取最后一个生成的token
     else:
         # 预填充状态
-        token_temp = token.transpose(0, 1).to(device)
+        token_temp = token.transpose(0, 1).to(args.device)
         with torch.no_grad():
             for t in token_temp:
                 out, state = model.forward(t, state)

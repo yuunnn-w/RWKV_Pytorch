@@ -13,8 +13,10 @@ import torch
 import time
 import uuid
 import json
+import copy
 
 app = Flask(__name__)
+
 
 # 添加跨域头信息的装饰器
 @app.after_request
@@ -25,46 +27,63 @@ def add_cors_headers(response):
     response.headers['Access-Control-Allow-Credentials'] = 'true'
     return response
 
+
 # 初始化模型和分词器
 def init_model():
     # 模型参数配置
     args = {
-        'MODEL_NAME': './weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096',
-        'vocab_size': 65536,
-        'device': "cpu",
-        'onnx_opset': '18',
-        "parrallel": "False",
+        # 模型文件的名字，pth结尾的权重文件。
+        'MODEL_NAME': './weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth',
+        'vocab_size': 65536,  # 词表大小
+        'device': 'cpu',  # 运行设备，可选'cpu','cuda','musa','npu'
+        'onnx_opset': '18',  # 非必要不要使用 <18 的值，会引起数值不稳定
+        'parrallel': 'True',  # 是否使用并行计算
+        # 如果不加载state权重，请置为''
+        'STATE_NAME': './weight/rwkv-x060-chn_single_round_qa-1B6-20240511-ctx1024'
+        # 请务必保证模型权重和State权重对应，这里暂时不做检查
     }
     args = device_checker(args)
     device = args['device']
     assert device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
 
-
     print("Loading model and tokenizer...")
     model = RWKV_RNN(args).to(device)
+    # 初始化状态
+    global_state = torch.zeros(
+        1, model.state_size[0], model.state_size[1]).cpu()
+    if 'STATE_NAME' in args and args['STATE_NAME'] != '':
+        STATE = torch.load(args['STATE_NAME'] + '.pth')
+        # 这里把训练好的state加载进去
+        n_head, head_size = model.n_head, model.head_size
+        for i, (key, value) in enumerate(STATE.items()):
+            global_state[:, ((2 + head_size) * i + 2):((2 + head_size) * (i + 1)),
+            :] = value.contiguous().permute(0, 2, 1).reshape(head_size, -1)
+
     tokenizer = RWKV_TOKENIZER("asset/rwkv_vocab_v20230424.txt")
     print("Done")
     print(f"Model name: {args.get('MODEL_NAME').split('/')[-1]}")
-    return model, tokenizer, device, args
-    
+    return model, tokenizer, global_state, device, args
+
+
 def format_messages_to_prompt(messages):
     formatted_prompt = ""
-    
+
     # Define the roles mapping to the desired names
     role_names = {
         "system": "System",
         "assistant": "Assistant",
         "user": "User"
     }
-    
+
     # Iterate through the messages and format them
     for message in messages:
         role = role_names.get(message['role'], 'Unknown')  # Get the role name, default to 'Unknown'
         content = message['content']
         formatted_prompt += f"{role}: {content}\n\n"  # Add the role and content to the prompt with newlines
-        
+
     formatted_prompt += "Assistant: "
     return formatted_prompt
+
 
 # 生成文本的函数
 def generate_text(prompt, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n\nUser']):
@@ -85,10 +104,11 @@ def generate_text(prompt, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n
     # 设置续写的初始字符串和参数
     encoded_input = tokenizer.encode([prompt])
     token = torch.tensor(encoded_input).long().to(device)
-    state = torch.zeros(1, model.state_size[0], model.state_size[1]).to(device)
+    state = copy.deepcopy(global_state)
+    state = state.to(device)
     prompt_tokens = len(encoded_input[0])
     stop_token = tokenizer.encode(stop)[0]
-    
+
     if args['parrallel'] == "True":
         with torch.no_grad():
             token_out, state_out = model.forward_parallel(token, state)
@@ -101,8 +121,7 @@ def generate_text(prompt, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n
                 out, state = model.forward(t, state)
 
     del token
-    
-    
+
     completion_tokens = 0
     if_max_token = True
     generated_tokens = ''
@@ -110,44 +129,47 @@ def generate_text(prompt, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n
         token_sampled = sample_logits(out, temperature, top_p)
         with torch.no_grad():
             out, state = model.forward(token_sampled, state)
-        
+
         # 判断是否达到停止条件
         last_token = tokenizer.decode(token_sampled.unsqueeze(1).tolist())[0]
         completion_tokens += 1
         print(last_token, end='')
-        
+
         generated_tokens += last_token
-        
+
         # 如果末尾含有 stop 列表中的字符串，则停止生成
         if generated_tokens.endswith(tuple(stop)):
-            generated_tokens = generated_tokens.replace(stop_token, "") # 替换掉终止token
+            generated_tokens = generated_tokens.replace(stop_token, "")  # 替换掉终止token
             if_max_token = False
             break
-            
+
     total_tokens = prompt_tokens + completion_tokens
     usage = {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "total_tokens": total_tokens}
     clear_cache()
     return generated_tokens, if_max_token, usage
 
+
 # 生成文本的生成器函数
 def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, stop=['\n\nUser']):
     encoded_input = tokenizer.encode([prompt])
     token = torch.tensor(encoded_input).long().to(device)
-    state = torch.zeros(1, model.state_size[0], model.state_size[1]).to(device)
+    state = copy.deepcopy(global_state)
+    state = state.to(device)
     prompt_tokens = len(encoded_input[0])
 
     if args['parrallel'] == "True":
         with torch.no_grad():
             token_out, state_out = model.forward_parallel(token, state)
-            out = token_out[:, -1]
+            out = token_out[:, -1]  # 取最后一个生成的token
     else:
         # 预填充状态
-        token = token.transpose(0, 1).to(device)
+        token_temp = token.transpose(0, 1).to(device)
         with torch.no_grad():
-            for t in token:
-                out, state = model.forward(t.unsqueeze(1), state)
-                out = out[:, -1]
+            for t in token_temp:
+                out, state = model.forward(t, state)
+        del token_temp  # 释放内存
     del token
+
     generated_tokens = ''
     completion_tokens = 0
     if_max_token = True
@@ -155,11 +177,11 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
         token_sampled = sample_logits(out, temperature, top_p)
         with torch.no_grad():
             out, state = model.forward(token_sampled, state)
-        
-        last_token = tokenizer.decode(token_sampled.unsqueeze(1).tolist())[0]
+
+        last_token = tokenizer.decode(token_sampled.unsqueeze(1).cpu().tolist())[0]
         generated_tokens += last_token
         completion_tokens += 1
-        
+
         if generated_tokens.endswith(tuple(stop)):
             if_max_token = False
             response = {
@@ -185,7 +207,7 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
                 }]
             }
             yield f"data: {json.dumps(response)}\n\n"
-            
+
     if if_max_token:
         response = {
             "object": "chat.completion.chunk",
@@ -197,8 +219,8 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
             }]
         }
         yield f"data: {json.dumps(response)}\n\n"
-    clear_cache()    
-    yield "data: [DONE]"         
+    clear_cache()
+    yield "data: [DONE]"
 
 
 def clear_cache():
@@ -210,10 +232,12 @@ def clear_cache():
     except:
         pass
 
+
 # 处理 OPTIONS 请求
 @app.route('/v1/chat/completions', methods=['OPTIONS'])
 def options_request():
     return Response(status=200)
+
 
 # 定义流式输出的路由
 # Define your completion route
@@ -231,7 +255,7 @@ def create_completion():
         stop = data.get('stop', ['\n\nUser'])
 
         prompt = format_messages_to_prompt(messages)
-        
+
         # Determine if streaming is enabled
         if stream:
             """
@@ -240,9 +264,12 @@ def create_completion():
                     yield event
             return Response(generate(), content_type='text/event-stream')
             """
-            return Response(generate_text_stream(prompt, temperature=temperature, top_p=top_p, max_tokens=max_tokens, stop=stop), content_type='text/event-stream')
+            return Response(
+                generate_text_stream(prompt, temperature=temperature, top_p=top_p, max_tokens=max_tokens, stop=stop),
+                content_type='text/event-stream')
         else:
-            completion, if_max_token, usage = generate_text(prompt, temperature=temperature, top_p=top_p, max_tokens=max_tokens, stop=stop)
+            completion, if_max_token, usage = generate_text(prompt, temperature=temperature, top_p=top_p,
+                                                            max_tokens=max_tokens, stop=stop)
             finish_reason = "stop" if if_max_token else "length"
             unique_id = str(uuid.uuid4())
             current_timestamp = int(time.time())
@@ -264,7 +291,7 @@ def create_completion():
     except Exception as e:
         return str(e), 500
 
-if __name__ == '__main__':
-    model, tokenizer, device, args = init_model()
-    app.run(host='0.0.0.0', port=8848)
 
+if __name__ == '__main__':
+    model, tokenizer, global_state, device, args = init_model()
+    app.run(host='0.0.0.0', port=8848)

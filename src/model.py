@@ -11,6 +11,8 @@ class ModelArgs(Serializable):
     MODEL_NAME: str = './weight/0.1-1/rwkv-final'
     DATASET_PATH: str = 'data/medical_dialog_test.jsonl'
     TOKENIZER_PATH: str = "asset/rwkv_vocab_v20230424.txt"
+    # STATE_NAME: str = 'weight/rwkv-x060-chn_single_round_qa-1B6-20240502-ctx1024'  # 如果不加载state权重，请置为''
+    STATE_NAME: str = ''
     device: str = 'cuda'
     vocab_size: int = 65536
     prev_id: int = None
@@ -21,6 +23,7 @@ class ModelArgs(Serializable):
     token_limit: int = 128
     onnx_opset: int = 18
     dtype: Union[Dict[str,str],str] = 'float32'
+    parallel:bool = True
 
 
 class RWKV_Block(nn.Module):

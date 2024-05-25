@@ -10,7 +10,12 @@ def simplify_large_onnx(args):
     in_model_path = args.in_model_path
     out_model_path = args.out_model_path
     if not out_model_path:
-        out_model_path = in_model_path[:-5] + ".sim.onnx"
+        out_model_dir = "./onnx/sim"
+        if not os.path.exists(out_model_dir):
+            os.makedirs(out_model_dir)
+        out_model_path = in_model_path.split("/")[-1][:-5] + ".sim.onnx"
+        out_model_path = os.path.join(out_model_dir, out_model_path)
+        print(out_model_path)
     if os.path.isdir(out_model_path):
         out_model_path = os.path.join(out_model_path, os.path.basename(in_model_path))
 
@@ -39,37 +44,58 @@ def simplify_large_onnx(args):
     save_extern = True if args.save_extern_data else False
     onnx.save(onnx_model, out_model_path, save_as_external_data=save_extern)
 
+    del onnx_model, removed_inits
+    import gc
+    gc.collect()
+    quantize_onnx(args, out_model_path)
+
+
+def quantize_onnx(args, in_model_path):
+    out_model_dir = "./onnx/quant"
+    if not os.path.exists(out_model_dir):
+        os.makedirs(out_model_dir)
+    out_model_name = in_model_path.split("/")[-1][:-5] + ".onnx"
+    out_model_path = os.path.join(out_model_dir, out_model_name)
+
+    onnx_model = onnx.load(in_model_path)
+    print(f"load model from {in_model_path} success")
+
     if args.quantize != "none":
         from optimum.onnxruntime.configuration import AutoQuantizationConfig
         from optimum.onnxruntime import ORTQuantizer
-    if args.quantize == "avx2":
-        dqconfig = AutoQuantizationConfig.avx2(
-            is_static=False,
-            per_channel=False,
-            use_symmetric_activations=True,  
-        )
-    elif args.quantize == "avx512":
-        dqconfig = AutoQuantizationConfig.avx512(
-            is_static=False,
-            per_channel=False,
-            use_symmetric_activations=True,        
-        )
-    elif args.quantize == "avx512_vnni":
-        dqconfig = AutoQuantizationConfig.avx512_vnni(
-            is_static=False,
-            per_channel=False,
-            use_symmetric_activations=True,            
-        )
 
-    if args.quantize != "none":
-        print("Quantizing the model...", args.quantize)
-        quantizer = ORTQuantizer.from_pretrained(onnx_model)
+        if args.quantize == "avx2":
+            dqconfig = AutoQuantizationConfig.avx2(
+                is_static=False,
+                per_channel=False,
+                use_symmetric_activations=True,
+            )
+        elif args.quantize == "avx512":
+            dqconfig = AutoQuantizationConfig.avx512(
+                is_static=False,
+                per_channel=False,
+                use_symmetric_activations=True,
+            )
+        elif args.quantize == "avx512_vnni":
+            dqconfig = AutoQuantizationConfig.avx512_vnni(
+                is_static=False,
+                per_channel=False,
+                use_symmetric_activations=True,
+            )
 
+        print(f"Quantizing the model with {args.quantize}...")
+        dir_path = os.path.dirname(args.in_model_path)
+        quantizer = ORTQuantizer.from_pretrained(dir_path)
+
+        save_extern = True if args.save_extern_data else False
         model_quantized_path = quantizer.quantize(
-            save_dir=out_model_path.replace(".onnx", args.quantize + ".onnx"),
+            save_dir=out_model_path.replace(".onnx", f".{args.quantize}.onnx"),
             quantization_config=dqconfig,
             use_external_data_format=save_extern,
         )
+        print(f"Quantized model saved to {model_quantized_path}")
+    else:
+        print("No quantization performed. Pass...")
 
 
 if __name__ == "__main__":
