@@ -45,6 +45,7 @@ def simplify_large_onnx(args):
     onnx.save(onnx_model, out_model_path, save_as_external_data=save_extern)
 
     del onnx_model, removed_inits
+
     import gc 
     gc.collect() 
     quantize_onnx(args, out_model_path)
@@ -88,6 +89,7 @@ def quantize_onnx(args, in_model_path):
         quantizer = ORTQuantizer.from_pretrained(dir_path)
 
 
+        
         save_extern = True if args.save_extern_data else False
         model_quantized_path = quantizer.quantize(
             save_dir=out_model_path.replace(".onnx", f".{args.quantize}.onnx"),
@@ -97,6 +99,7 @@ def quantize_onnx(args, in_model_path):
         print(f"Quantized model saved to {model_quantized_path}")
     else:
         print("No quantization performed. Pass...")
+
         
 
 

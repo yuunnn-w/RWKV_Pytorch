@@ -2,16 +2,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Tuple,Dict,List,Union
+from typing import Tuple,Dict,Union
 from simple_parsing.helpers import Serializable
 from dataclasses import dataclass
-from model_utils import RWKV_x060
 
 @dataclass
 class ModelArgs(Serializable):
     MODEL_NAME: str = './weight/0.1-1/rwkv-final'
     DATASET_PATH: str = 'data/medical_dialog_test.jsonl'
     TOKENIZER_PATH: str = "asset/rwkv_vocab_v20230424.txt"
+    # STATE_NAME: str = 'weight/rwkv-x060-chn_single_round_qa-1B6-20240502-ctx1024'  # 如果不加载state权重，请置为''
+    STATE_NAME: str = ''
     device: str = 'cuda'
     vocab_size: int = 65536
     prev_id: int = None
@@ -21,7 +22,8 @@ class ModelArgs(Serializable):
     batch_size: int = 4
     token_limit: int = 128
     onnx_opset: int = 18
-    dtype: Union[List[str],str] = 'float32'
+    dtype: Union[Dict[str,str],str] = 'float32'
+    parallel:bool = True
 
 
 class RWKV_Block(nn.Module):
@@ -90,7 +92,7 @@ class RWKV_Block(nn.Module):
         else:
             self.att_group_norm_weight = nn.Parameter(block_w['att.ln_x.weight'])
             self.att_group_norm_bias = nn.Parameter(block_w['att.ln_x.bias'])
-            
+
         # 初始化前馈参数
         self.ffn_time_maa_k = nn.Parameter(block_w['ffn.time_maa_k'])
         self.ffn_time_maa_r = nn.Parameter(block_w['ffn.time_maa_r'])
@@ -182,7 +184,7 @@ class RWKV_Block(nn.Module):
         Batch, L, _ = x.shape
         i0 = (2 + self.head_size) * i + 0
 
-        sx_lerp = torch.empty_like(x)
+        sx_lerp = torch.empty(x.shape, dtype=self.datatype, device=x.device)
         sx_lerp[:, 0] = state[:, i0] - x[:, 0]
 
         # for l in range(1, L):
@@ -271,7 +273,7 @@ class RWKV_Block(nn.Module):
         batch_size, L, H, S = x.size(0), x.size(1), self.n_head, self.head_size
         i1 = (2 + S) * i + 1
         # 初始化结果张量
-        sx_lerp = torch.empty_like(x)
+        sx_lerp = torch.empty(x.shape, dtype=self.datatype, device=x.device)
 
         # 计算初始插值
         sx_lerp[:, 0] = state[:, i1] - x[:, 0]
@@ -308,7 +310,7 @@ class RWKV_Block(nn.Module):
         s = state[:, (2+S)*i+2:(2+S)*(i+1)].view(batch_size, H, S, S)
         a = k @ v # a: [batch_size, L, H, S, S]
 
-        state_s = torch.zeros(batch_size, L, H, S, S, dtype=x.dtype, device=x.device) #初始化state_s的结果张量
+        state_s = torch.empty(batch_size, L, H, S, S, dtype=self.datatype, device=x.device) #初始化state_s的结果张量
         state_s[:, 0] = s #把第一个a_{t-1, j}赋值给state_s
 
 
@@ -386,51 +388,21 @@ class RWKV_RNN(nn.Module):
             self.onnx_opset = 16 #默认是最低的，op17版本才支持LayerNorm算子，op18版本才支持GroupNorm算子
         print('onnx opset ', self.onnx_opset)
         self.eval()
-        if isinstance(args.dtype,list):
-            self.datatype = getattr(torch,args.dtype[args.rank_id])
+        if isinstance(args.dtype,dict):
+            self.datatype = getattr(torch,args.dtype[str(args.rank_id)])
         elif isinstance(args.dtype,str):
             self.datatype = getattr(torch,args.dtype)
         else:
             self.datatype = torch.float32
-        self.dataformat = self.datatype
-        
-        
+        # 加载权重
+        if not args.MODEL_NAME.endswith('.pth'):
+            args.MODEL_NAME += '.pth'
+        w = torch.load(args.MODEL_NAME, map_location='cpu')
 
-    def init_params(self):
-        # 检查参数是否都存在
-        assert 'n_embd' in self.args
-        assert 'n_layer' in self.args
-        assert 'vocab_size' in self.args
-        if 'head_size_a' not in self.args:
-            self.args['head_size_a'] = 64
-        if 'head_size_divisor' not in self.args:
-            self.args['head_size_divisor'] = 8
-
-        model_init = RWKV_x060(self.args)
-        # 使用初始化的权重加载模型
-        self.load_params(load_from_file=False, w=model_init.state_dict())
-        del model_init
-        import gc
-        gc.collect()
-
-
-    def load_params(self, load_from_file: bool = True, w: dict = None):
-        if load_from_file:
-            if not self.args['MODEL_NAME'].endswith('.pth'):
-                self.args['MODEL_NAME'] += '.pth'
-            w = torch.load(self.args['MODEL_NAME'], map_location="cpu")
-        else:
-            assert w is not None
-        
         # 将所有权重转换为float32/float16
         self.num_layer = 0
         for k in w.keys():
-            if self.dataformat == 'fp32':
-                w[k] = w[k].float()
-            elif self.dataformat == 'fp16':
-                w[k] = w[k].half()
-            elif self.dataformat == 'bf16':
-                w[k] = w[k].bfloat16()
+            w[k] = w[k].to(self.datatype)
             if '.time_' in k: w[k] = w[k].squeeze()
             if '.time_faaaa' in k: w[k] = w[k].unsqueeze(-1)
             if "blocks" in k: self.num_layer = max(self.num_layer, int(k.split(".")[1]))
@@ -553,162 +525,58 @@ class RWKV_RNN(nn.Module):
                 x = self.manual_layer_norm(x, self.ln_out_weight, self.ln_out_bias, 1e-5)
             x = self.head(x)
         return x, state
-    
-    def forward_parallel_slices(self, token: torch.Tensor, state: torch.Tensor, slice_len: int = 64) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        模型的分段并行前向传播，减少显存/内存使用。
-        Args:
-            token (torch.Tensor): 输入的令牌张量。[Batch_size, L]
-            state (torch.Tensor): 隐藏状态张量。[Batch_size, State_size, N_embd]
-        Returns:
-            torch.Tensor: 模型输出。
-        """
-        data_len = token.shape[1]
-        for i in range((data_len-2)//slice_len+1):
-            start = i*slice_len
-            end = min((i+1)*slice_len, data_len)
-            token_i = token[:, start:end]
-            token_out, state_new = self.forward_parallel(token_i, state)
-            state = state_new.detach()  # 使用 detach() 截断梯度传播, 训练使用
-        
-        return token_out, state
 
-    def init_state(self, batch_size: int) -> torch.Tensor:
-        """
-        初始化状态。
-        rgs:
-            batch_size (int): 批次大小。
-        Returns:
-            state (torch.Tensor): 隐藏状态张量。[Batch_size, State_size, N_embd], device="cpu"
-        """
-        # 初始化状态
-        state = torch.zeros(batch_size, self.state_size[0], self.state_size[1])
-
-        # 这里把训练好的state加载进去
-        if 'STATE_NAME' in self.args and self.args['STATE_NAME'] != '':
-            STATE = torch.load(self.args['STATE_NAME'].replace(
-                ".pth", "")+'.pth', map_location=torch.device("cpu"))
-            head_size = self.head_size
-            for i, (key, value) in enumerate(STATE.items()):
-                state[:, ((2 + head_size)*i + 2):((2 + head_size)*(i + 1)),
-                      :] = value.contiguous().permute(0, 2, 1).reshape(head_size, -1)
-            
-            if self.dataformat == 'fp16':
-                state = state.half()
-            elif self.dataformat == 'bf16':
-                state = state.bfloat16()
-            elif self.dataformat == 'fp32':
-                state = state.float()
-
-        return state
-
-    def save_model(self, model_path, bf16=True):
+    def save_model(self, model_path):
         """
         将训练后的模型保存为 .pth 文件。
         Args:
             model_path (str): 要保存的模型路径。
         """
+        assert self.onnx_opset >= 18, "onnx_opset must be greater than or equal to 18"
+
         # 创建一个空字典来存储模型权重
         state_dict = {}
 
-        # 保存词嵌入层的权重
-        state_dict['emb.weight'] = self.emb.weight.data
-
         # 保存 RWKV_RNN 的权重
         for name, param in self.named_parameters():
-            if self.onnx_opset >= 17:
-                if 'ln0' in name:
-                    state_dict[name.replace('ln0.', 'blocks.0.ln0.')] = param.data
-                if 'blocks' not in name:
-                    state_dict[name] = param.data
-            else:
-                if 'ln0_weight' in name:
-                    state_dict['blocks.0.ln0.weight'] = param.data
-                elif 'ln0_bias' in name:
-                    state_dict['blocks.0.ln0.bias'] = param.data
-                elif 'ln_out_weight' in name:
-                    state_dict['ln_out.weight'] = param.data
-                elif 'ln_out_bias' in name:
-                    state_dict['ln_out.bias'] = param.data
-                elif 'blocks' not in name:
-                    state_dict[name] = param.data
+            # 保存词嵌入层的权重
+            if 'emb' in name:
+                state_dict['emb.weight'] = self.emb.weight.data
+            if 'ln0' in name:
+                state_dict[name.replace('ln0.', 'blocks.0.ln0.')] = param.data
+            if 'blocks' not in name:
+                state_dict[name] = param.data
 
         # 保存 RWKV_Block 的权重
         for i, block in self.blocks.items():
             for name, param in block.named_parameters():
-                # 根据 ONNX opset 版本对权重名称进行调整
-                if self.onnx_opset >= 18:
-                    if name == 'att_group_norm.weight':
-                        name = 'att.ln_x.weight'
-                    elif name == 'att_group_norm.bias':
-                        name = 'att.ln_x.bias'
-                elif self.onnx_opset >= 17:
-                    if name == 'ln1.weight':
-                        name = 'ln1.weight'
-                    elif name == 'ln1.bias':  
-                        name = 'ln1.bias'
-                    elif name == 'ln2.weight':
-                        name = 'ln2.weight' 
-                    elif name == 'ln2.bias':
-                        name = 'ln2.bias'
-                    elif name == 'att_group_norm_weight':
-                        name = 'att.ln_x.weight'
-                    elif name == 'att_group_norm_bias': 
-                        name = 'att.ln_x.bias'
-                else:
-                    if name == 'ln0_weight':
-                        name = 'ln0.weight'
-                    elif name == 'ln0_bias':
-                        name = 'ln0.bias'
-                    elif name == 'ln1_weight':
-                        name = 'ln1.weight'
-                    elif name == 'ln1_bias':
-                        name = 'ln1.bias'  
-                    elif name == 'ln2_weight':
-                        name = 'ln2.weight'
-                    elif name == 'ln2_bias': 
-                        name = 'ln2.bias'
-                    elif name == 'att_group_norm_weight':
-                        name = 'att.ln_x.weight'
-                    elif name == 'att_group_norm_bias': 
-                        name = 'att.ln_x.bias'
-
-                if name.startswith('att_'):
-                    # 将 'att_' 替换为 'att.'  
+                # 根据名称对权重进行调整
+                if name == 'att_group_norm.weight':
+                    name = 'att.ln_x.weight'
+                elif name == 'att_group_norm.bias':
+                    name = 'att.ln_x.bias'
+                elif name.startswith('att_'):
+                    # 将 'att_' 替换为 'att.'
                     name = 'att.' + name[4:]
                 elif name.startswith('ffn_'):
                     name = 'ffn.' + name[4:]
-                    
                 if '.time_faaaa' in name:
                     param_data = param.data
                 elif '.time_' in name:
                     param_data = param.data.unsqueeze(-1)
                 else:
                     param_data = param.data
-                    
+
                 state_dict[f'blocks.{i}.{name}'] = param_data
 
-            # 保存单独的注意力参数
-            for param_idx, param_name in enumerate(['att.time_maa_k', 'att.time_maa_w', 'att.time_maa_v', 'att.time_maa_r', 'att.time_maa_g']):
-                state_dict[f'blocks.{i}.{param_name}'] = block.att_stacked_weights.data[0, param_idx, :]
-
-
-        for name in state_dict:
-            if '.time_maa_w1' in name or '.time_decay_w1' in name or '.time_decay_w2' in name or 'att.time_faaaa' in name:
-                state_dict[name] = state_dict[name].view(state_dict[name].shape[0], state_dict[name].shape[1])
-            elif '.time_maa_w2' in name:
-                state_dict[name] = state_dict[name].view(state_dict[name].shape[0], state_dict[name].shape[1], state_dict[name].shape[2])
-            elif 'att.time_maa_x' in name or 'att.time_maa_w' in name or 'att.time_maa_k' in name or 'att.time_maa_v' in name or 'att.time_maa_r' in name or 'att.time_maa_g' in name \
-                or 'ffn.time_maa_k' in name or 'ffn.time_maa_r' in name or 'time_decay' in name:
-                state_dict[name] = state_dict[name].view(1, 1, state_dict[name].shape[0])
-            else:
-                state_dict[name] = state_dict[name]
-        
-        if bf16 == True:
-            for key in state_dict.keys():
-                state_dict[key] = state_dict[key].bfloat16()
         # 保存模型权重到 .pth 文件
         if not model_path.endswith('.pth'):
             model_path += '.pth'
         torch.save(state_dict, model_path)
         print(f"Model saved as {model_path}")
+
+if __name__ == '__main__':
+    import json
+    with open("../train/params.json", "r") as f:
+        args = ModelArgs.from_dict(json.load(f))
+        print(args)

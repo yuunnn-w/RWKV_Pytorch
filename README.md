@@ -28,18 +28,18 @@ We are very happy to support various hardware devices, including but not limited
 
 
 ## 使用方法
-1. 克隆仓库 `git clone -b dev https://github.com/yuunnn-w/RWKV_Pytorch.git`
+1. 克隆仓库 `git clone -b pipeline https://github.com/yuunnn-w/RWKV_Pytorch.git`
 2. 执行 `cd RWKV_Pytorch` 进入仓库目录，执行 `pip install -r requirements.txt` 安装依赖。
 3. 下载 RWKV6 模型，官方仓库地址：[BlinkDL/rwkv-6-world](https://huggingface.co/BlinkDL/rwkv-6-world/tree/main)，将模型权重放置在`weight`文件夹中。
 4. 修改 `main.py` 文件的 `MODEL_NAME` 参数。
-5. 执行 `python main.py`，即可看到batch推理效果。
+5. 执行 `torchrun --nproc-per-node 3 train/train-parallel.py`，即可看到流水并行训练效果。
 
 **Usage**
-1. Clone the repository: `git clone https://github.com/yuunnn-w/RWKV_Pytorch.git`
+1. Clone the repository: `git clone -b pipeline https://github.com/yuunnn-w/RWKV_Pytorch.git`
 2. Navigate to the repository directory: `cd RWKV_Pytorch`, then install the dependencies: `pip install -r requirements.txt`.
 3. Download the RWKV6 model from the official repository: [BlinkDL/rwkv-6-world](https://huggingface.co/BlinkDL/rwkv-6-world/tree/main), and place the model weights in the `weight` directory.
 4. Modify the `MODEL_NAME` parameter in the `main.py` file.
-5. Run `python main.py` to see the batch inference results.
+5. Run `torchrun --nproc-per-node 3 train/train-parallel.py` to start the pipeline-parallel training.
 
 
 ## 导出onnx方法

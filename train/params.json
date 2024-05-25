@@ -1,10 +1,10 @@
 {
-  "MODEL_NAME": "./weight/RWKV-x060-World-7B-v2.1-20240507-ctx4096",
+  "MODEL_NAME": "./weight/checkpoint-final",
   "TOKENIZER_PATH": "asset/rwkv_vocab_v20230424.txt",
   "DATASET_PATH": "data/sample.jsonl",
   "device": "cuda",
   "vocab_size": 65536,
   "batch_size": 4,
   "onnx_opset": 18,
-  "dtype":"float16"
+  "dtype": "float32"
 }

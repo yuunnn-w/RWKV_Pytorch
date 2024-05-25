@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 import torch.nn.functional as F
 import numpy as np
 from collections import defaultdict
@@ -115,6 +116,13 @@ def sample_logits_numpy(out: np.ndarray, temperature: float = 1.0, top_p: float 
     # 计算累积对数概率
     sorted_log_probabilities = np.sort(log_probabilities, axis=-1)[:, ::-1]
     cumulative_log_probs = np.cumsum(sorted_log_probabilities, axis=-1)
+    probabilities = np.exp(log_probabilities)
+    probabilities /= np.sum(probabilities, axis=-1, keepdims=True)
+
+    sampled_index = np.apply_along_axis(
+        lambda p: np.random.choice(len(p), p=p), -1, probabilities)
+
+    return sampled_index
 
     # 创建一个掩码,用于标识根据top_p要移除的tokens
     mask_remove = cumulative_log_probs > np.log(top_p)

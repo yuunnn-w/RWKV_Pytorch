@@ -18,6 +18,7 @@ import copy
 
 app = Flask(__name__)
 
+
 # 添加跨域头信息的装饰器
 @app.after_request
 def add_cors_headers(response):
@@ -27,18 +28,19 @@ def add_cors_headers(response):
     response.headers['Access-Control-Allow-Credentials'] = 'true'
     return response
 
+
 # 初始化模型和分词器
 def init_model():
     # 模型参数配置
     args = {
         # 模型文件的名字，pth结尾的权重文件。
-        'MODEL_NAME': './weight/RWKV-x060-World-3B-v2.1-20240417-ctx4096.pth',
+        'MODEL_NAME': './weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth',
         'vocab_size': 65536,  # 词表大小
         'device': 'cpu',  # 运行设备，可选'cpu','cuda','musa','npu'
         'onnx_opset': '18',  # 非必要不要使用 <18 的值，会引起数值不稳定
         'parrallel': 'True',  # 是否使用并行计算
         # 如果不加载state权重，请置为''
-        'STATE_NAME': './weight/rwkv-x060-chn_single_round_qa-3B-20240516-ctx2048.pth'
+        'STATE_NAME': './weight/rwkv-x060-chn_single_round_qa-1B6-20240511-ctx1024'
         # 请务必保证模型权重和State权重对应，这里暂时不做检查
     }
     args = device_checker(args)
@@ -46,35 +48,44 @@ def init_model():
     assert device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
     print(f"Device: {device}")
 
-
     print("Loading model and tokenizer...")
     model = RWKV_RNN(args).to(device)
     # 初始化状态
-    global_state = model.init_state(1)
+    global_state = torch.zeros(
+        1, model.state_size[0], model.state_size[1]).cpu()
+    if 'STATE_NAME' in args and args['STATE_NAME'] != '':
+        STATE = torch.load(args['STATE_NAME'] + '.pth')
+        # 这里把训练好的state加载进去
+        n_head, head_size = model.n_head, model.head_size
+        for i, (key, value) in enumerate(STATE.items()):
+            global_state[:, ((2 + head_size) * i + 2):((2 + head_size) * (i + 1)),
+            :] = value.contiguous().permute(0, 2, 1).reshape(head_size, -1)
 
     tokenizer = RWKV_TOKENIZER("asset/rwkv_vocab_v20230424.txt")
     print("Done")
     print(f"Model name: {args.get('MODEL_NAME').split('/')[-1]}")
     return model, tokenizer, global_state, device, args
-    
+
+
 def format_messages_to_prompt(messages):
     formatted_prompt = ""
-    
+
     # Define the roles mapping to the desired names
     role_names = {
         "system": "System",
         "assistant": "Assistant",
         "user": "User"
     }
-    
+
     # Iterate through the messages and format them
     for message in messages:
         role = role_names.get(message['role'], 'Unknown')  # Get the role name, default to 'Unknown'
         content = message['content']
         formatted_prompt += f"{role}: {content}\n\n"  # Add the role and content to the prompt with newlines
-        
+
     formatted_prompt += "Assistant: "
     return formatted_prompt
+
 
 # 生成文本的函数
 def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, presence_penalty=0.0,
@@ -100,7 +111,7 @@ def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, pres
     state = state.to(device)
     prompt_tokens = len(encoded_input[0])
     stop_token = tokenizer.encode(stop)[0]
-    
+
     if args['parrallel'] == "True":
         with torch.no_grad():
             token_out, state = model.forward_parallel_slices(token, state, slice_len=512)
@@ -113,8 +124,7 @@ def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, pres
                 out, state = model.forward(t, state)
 
     del token
-    
-    
+
     completion_tokens = 0
     if_max_token = True
     generated_texts = ''
@@ -132,7 +142,7 @@ def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, pres
         )
         with torch.no_grad():
             out, state = model.forward(token_sampled, state)
-        
+
         # 判断是否达到停止条件
         last_text = tokenizer.decode(token_sampled.unsqueeze(1).cpu().tolist())[0]
         generated_texts += last_text
@@ -145,12 +155,13 @@ def generate_text(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, pres
             generated_texts = generated_texts.replace(stop_token, "") # 替换掉终止token
             if_max_token = False
             break
-            
+
     total_tokens = prompt_tokens + completion_tokens
     usage = {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "total_tokens": total_tokens}
     del state
     clear_cache()
     return generated_texts, if_max_token, usage
+
 
 # 生成文本的生成器函数
 def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=2048, presence_penalty = 0.0,
@@ -196,12 +207,12 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
         )
         with torch.no_grad():
             out, state = model.forward(token_sampled, state)
-        
-        last_text = tokenizer.decode(token_sampled.unsqueeze(1).cpu().tolist())[0]
-        generated_texts += last_text
+
+        last_token = tokenizer.decode(token_sampled.unsqueeze(1).cpu().tolist())[0]
+        generated_tokens += last_token
         completion_tokens += 1
-        
-        if generated_texts.endswith(tuple(stop)):
+
+        if generated_tokens.endswith(tuple(stop)):
             if_max_token = False
             response = {
                 "object": "chat.completion.chunk",
@@ -246,16 +257,18 @@ def generate_text_stream(prompt: str, temperature=1.5, top_p=0.1, max_tokens=204
     
     del state
     clear_cache()    
-    yield "data: [DONE]"         
+    yield "data: [DONE]" 
 
 
 def clear_cache():
     device_specific_empty_cache(args)
 
+
 # 处理 OPTIONS 请求
 @app.route('/v1/chat/completions', methods=['OPTIONS'])
 def options_request():
     return Response(status=200)
+
 
 # 定义流式输出的路由
 # Define your completion route
@@ -275,7 +288,7 @@ def create_completion():
         stop = data.get('stop', ['\n\nUser', '<|endoftext|>'])
 
         prompt = format_messages_to_prompt(messages)
-        
+
         # Determine if streaming is enabled
         if stream:
             """
@@ -319,3 +332,6 @@ if __name__ == '__main__':
     model, tokenizer, global_state, device, args = init_model()
     app.run(host='0.0.0.0', port=8848)
 
+if __name__ == '__main__':
+    model, tokenizer, global_state, device, args = init_model()
+    app.run(host='0.0.0.0', port=8848)
