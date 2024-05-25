@@ -1,6 +1,7 @@
-.vscode/*
+.vscode/settings.json
 *.pyc
 *.pth
 rwkv_vocab_v20230424.txt
-data/*
-onnx/*
+data/seq.jsonl
+onnx/
+.idea/

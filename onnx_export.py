@@ -1,17 +1,13 @@
-import time
+import time,json
 import os
 import torch
-from src.model import RWKV_RNN
+from src.model import RWKV_RNN,ModelArgs
 
 if __name__ == '__main__':
     # 初始化模型参数
-    args = {
-        'MODEL_NAME': 'weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096', #模型文件的名字，pth结尾的权重文件。
-        'vocab_size': 65536, #词表大小
-        'onnx_opset': '17', # 12
-        'device': 'cpu',
-    }
-    
+    with open("train/params.json", "r") as f:
+        args:ModelArgs = ModelArgs.from_dict(json.load(f))
+
     # 加载模型
     print(f"Loading model {args['MODEL_NAME']}.pth...")
     model = RWKV_RNN(args)
@@ -25,16 +21,14 @@ if __name__ == '__main__':
     example_token = torch.zeros(5).long()  #token输入的尺寸 [batch]
     example_state = torch.rand(5, *model.state_size)  # state_size是state输入的尺寸
     A, B = model(example_token, example_state)
-    os.makedirs("onnx", exist_ok=True)
+    outputdir = "./onnx/rwkv/"
+    if not os.path.exists(outputdir):
+        os.makedirs(outputdir, exist_ok=True)
     # 导出模型
     print("\nExport Onnx...")
-
-    outputdir = f"./onnx/rwkv/"
-    if not os.path.exists(outputdir):
-        os.makedirs(outputdir)
     torch.onnx.export(model,
                       (example_token, example_state),
-                      f"{outputdir}{args['MODEL_NAME'].split('/')[-1].replace(".pth","")}.onnx",
+                      f"{outputdir}{args.MODEL_NAME.split('/')[-1]}.onnx",
                       export_params=True,
                       verbose=True,
                       opset_version=16, #LayerNorm最低支持是op17
