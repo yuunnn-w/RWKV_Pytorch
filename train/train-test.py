@@ -13,7 +13,7 @@ from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 from src.rwkv_tokenizer import RWKV_TOKENIZER
 from src.model_utils import device_checker
-from src.model import RWKV_RNN
+from src.model import RWKV_RNN, ModelArgs
 import torch
 
 
@@ -43,23 +43,16 @@ class TextDataset(Dataset):
 
 
 # 初始化模型参数
-args = {
-    # 模型文件的名字，pth结尾的权重文件。
-    'MODEL_NAME': './weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth',
-    'vocab_size': 65536  # 词表大小，不要乱改
-    , 'device': "cuda"    # ,'device': "cuda"
-    , 'onnx_opset': 18
-}
-args = device_checker(args)
-device = args['device']
-assert device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
+with open("train/params.json", "r") as f:
+    args:ModelArgs = ModelArgs.from_dict(json.load(f))
+    args = device_checker(args)
+    assert args.device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
 
-
-device = torch.device(args['device'])
+device = torch.device(args.device)
 # 加载模型和分词器
 print("Loading model and tokenizer...")
 model = RWKV_RNN(args).to(device)
-tokenizer = RWKV_TOKENIZER("asset/rwkv_vocab_v20230424.txt")
+tokenizer = RWKV_TOKENIZER(ModelArgs.TOKENIZER_PATH)
 print("Done.")
 
 file_path = 'data/seq.jsonl'  # 替换为你的文本文件路径

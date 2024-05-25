@@ -54,9 +54,9 @@ class PipeSchedule:
             num_token = len(x[0])
             x = torch.zeros((1,num_token,P2pLayerBegin.n_embd),dtype=self.model.datatype,requires_grad=True).cuda()
         x = P2pLayerBegin.apply(x)
-        print(f'RANK[{self.rank_id}] forward begin')
+        # print(f'RANK[{self.rank_id}] forward begin')
         x,state = self.model.forward_parallel(x, state)
-        print(f'RANK[{self.rank_id}] forward end')
+        # print(f'RANK[{self.rank_id}] forward end')
         x = P2pLayerEnd.apply(x)
         self.output_tensors.append(x.sum())
         return x, state.detach_()
@@ -64,7 +64,7 @@ class PipeSchedule:
         x = self.output_tensors[0]
         self.output_tensors = self.output_tensors[1:]
         x.backward()
-        print(f'RANK[{self.rank_id}] backward')
+        # print(f'RANK[{self.rank_id}] backward')
     def train_with_gpipe(self,x,y,loss_fn):
         # todo: 未完成
         batch_size = len(x)

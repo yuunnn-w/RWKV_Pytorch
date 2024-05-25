@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Tuple,Dict,List,Union
+from typing import Tuple,Dict,Union
 from simple_parsing.helpers import Serializable
 from dataclasses import dataclass
 
@@ -20,7 +20,7 @@ class ModelArgs(Serializable):
     batch_size: int = 4
     token_limit: int = 128
     onnx_opset: int = 18
-    dtype: Union[List[str],str] = 'float32'
+    dtype: Union[Dict[str,str],str] = 'float32'
 
 
 class RWKV_Block(nn.Module):
@@ -385,8 +385,8 @@ class RWKV_RNN(nn.Module):
             self.onnx_opset = 16 #默认是最低的，op17版本才支持LayerNorm算子，op18版本才支持GroupNorm算子
         print('onnx opset ', self.onnx_opset)
         self.eval()
-        if isinstance(args.dtype,list):
-            self.datatype = getattr(torch,args.dtype[args.rank_id])
+        if isinstance(args.dtype,dict):
+            self.datatype = getattr(torch,args.dtype[str(args.rank_id)])
         elif isinstance(args.dtype,str):
             self.datatype = getattr(torch,args.dtype)
         else:
@@ -534,11 +534,11 @@ class RWKV_RNN(nn.Module):
         # 创建一个空字典来存储模型权重
         state_dict = {}
 
-        # 保存词嵌入层的权重
-        state_dict['emb.weight'] = self.emb.weight.data
-
         # 保存 RWKV_RNN 的权重
         for name, param in self.named_parameters():
+            # 保存词嵌入层的权重
+            if 'emb' in name:
+                state_dict['emb.weight'] = self.emb.weight.data
             if 'ln0' in name:
                 state_dict[name.replace('ln0.', 'blocks.0.ln0.')] = param.data
             if 'blocks' not in name:
@@ -571,3 +571,9 @@ class RWKV_RNN(nn.Module):
             model_path += '.pth'
         torch.save(state_dict, model_path)
         print(f"Model saved as {model_path}")
+
+if __name__ == '__main__':
+    import json
+    with open("../train/params.json", "r") as f:
+        args = ModelArgs.from_dict(json.load(f))
+        print(args)

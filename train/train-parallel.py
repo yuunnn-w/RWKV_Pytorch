@@ -102,10 +102,21 @@ def main(args:ModelArgs):
     # 同步GPU执行位置
     torch.cuda.synchronize()
     end_time = time.time()
+    model.save_model(f'weight/checkpoint-final-{args.rank_id}.pth')
+    save_time = time.time()
+
     # 计算并打印程序运行时间
     execution_time = end_time - start_time
+    save_time = save_time - end_time
     dist.barrier()
-    print(f"RANK[{args.rank_id}]程序运行时间：{execution_time:.2f}秒\n",end='')
+    print(f"RANK[{args.rank_id}]程序运行时间：{execution_time:.2f}秒，保存模型耗时：{save_time:.2f}秒\n",end='')
+    if args.prev_id is None:
+        state_dict = {}
+        for i in range(args.world_size):
+            state_part = torch.load(f'weight/checkpoint-final-{i}.pth')
+            state_dict = {**state_dict,**state_part}
+            os.remove(f'weight/checkpoint-final-{i}.pth')
+        torch.save(state_dict,f'weight/checkpoint-final.pth')
 
 def init_process(args:ModelArgs):
     """ Initialize the distributed environment. """
