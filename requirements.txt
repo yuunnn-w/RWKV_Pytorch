@@ -7,3 +7,5 @@ simple-parsing
 icecream
 Flask
 tqdm
+optimum
+gradio
