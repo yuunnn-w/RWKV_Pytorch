@@ -12,10 +12,10 @@ from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 from src.rwkv_tokenizer import RWKV_TOKENIZER
-from src.model_utils import device_checker
+from src.model_utils import device_checker, device_specific_empty_cache
 from src.model import RWKV_RNN
 import torch
-
+from torch.optim.lr_scheduler import LinearLR
 
 
 
@@ -45,11 +45,12 @@ class TextDataset(Dataset):
 # 初始化模型参数
 args = {
     # 模型文件的名字，pth结尾的权重文件。
-    'MODEL_NAME': './weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth',
+    'MODEL_NAME': './weight/RWKV-x060-World-3B-v2.1-20240417-ctx4096.pth',
     'vocab_size': 65536  # 词表大小，不要乱改
     , 'device': "cpu"    # ,'device': "cuda"
     , 'onnx_opset': 16,
-    'dataformat': 'bf16'
+    'dataformat': 'bf16',
+    'STATE_NAME': 'weight/rwkv-trained-latest.pth', # 如果不加载state权重，请置为''
 }
 args = device_checker(args)
 device = args['device']
@@ -64,17 +65,27 @@ model = RWKV_RNN(args).to(device)
 tokenizer = RWKV_TOKENIZER("asset/rwkv_vocab_v20230424.txt")
 print("Done.")
 
-file_path = 'data/demo.jsonl'  # 替换为你的文本文件路径
+file_path = 'data/unknow_zh_38k_continue_1.jsonl'  # 替换为你的文本文件路径
 save_path = "./weight/rwkv-test-epoch-1.pth"
 # 设置续写的初始字符串和参数
-optimizer = torch.optim.Adam(model.parameters())
+
 criterion = nn.CrossEntropyLoss()
-slice_len = 8
+slice_len = 32
 dataset = TextDataset(file_path, tokenizer)
 dataloader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=4)
-accumulation_steps = 10  # 每 10 步更新一次参数
+accumulation_steps = 5  # 每 10 步更新一次参数
 epochs = 1
+initial_state = model.init_state(batch_size=1).detach().to(device)
+initial_state.requires_grad = True
+# optimizer = torch.optim.Adam([initial_state])
+lr_init = 1
+lr_final = 0.01
+warmup_steps = 1000
+total_steps =  len(dataloader) * epochs
+optimizer = torch.optim.AdamW([initial_state], lr=lr_init)
+scheduler = LinearLR(optimizer, start_factor=lr_init, end_factor=lr_final, total_iters=warmup_steps)
 
+model = torch.compile(model)
 # with torch.autograd.set_detect_anomaly(True): # 检测梯度异常
 for epoch in range(epochs):
     accumulated_loss = 0
@@ -86,14 +97,14 @@ for epoch in range(epochs):
             x = x[0].to(device)
             y = y[0].to(device)
             data_len = x.shape[1]
-            state = model.init_state(batch_size=1).to(device)
+            state = initial_state.clone()  # 直接使用原始的 initial_state
             total_length += data_len
             prev_scale_factor = prev_total_length/total_length
             accumulated_loss *= prev_scale_factor
             # 根据序列的总长度对梯度进行规范化
-            for param in model.parameters():
-                if param.grad is not None:
-                    param.grad *= prev_scale_factor
+            param = initial_state
+            if param.grad is not None:
+                param.grad *= prev_scale_factor
             # FIXME: 使用类自带的 forward_parallel_slices 方法
             for i in range((data_len-2)//slice_len+1):
                 start = i*slice_len
@@ -113,9 +124,14 @@ for epoch in range(epochs):
             if step % accumulation_steps == 0 or step == len(dataloader):
                 optimizer.step()
                 optimizer.zero_grad()
+                # 更新学习率
+                if step <= warmup_steps:
+                    scheduler.step()
                 total_length = 0
                 prev_total_length = 0
+                device_specific_empty_cache(args)
+                model.save_state(initial_state, "./weight/rwkv-trained-latest.pth")
+            tbar.set_postfix(avg_loss=accumulated_loss, lr=optimizer.param_groups[0]['lr'])
 
-            tbar.set_postfix(avg_loss=accumulated_loss)
-
-model.save_model(save_path)
+# 保存训练好的 state
+model.save_state(initial_state, "./weight/rwkv-trained-state.pth")
