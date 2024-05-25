@@ -16,6 +16,17 @@ if __name__ == '__main__':
     print("Loading model and tokenizer...")
     model = RWKV_RNN(args).to(args.device)
     tokenizer = RWKV_TOKENIZER(args.TOKENIZER_PATH)
+    
+    
+    args = device_checker(args)
+    device = args['device']
+    assert device in ['cpu', 'cuda', 'musa', 'npu', 'xpu']
+    
+    # 加载模型和分词器
+    print("Loading model and tokenizer...")
+    model = RWKV_RNN(args).to(device)
+    tokenizer = RWKV_TOKENIZER("asset/rwkv_vocab_v20230424.txt")
+        
     print(model)
     print("Done.")
 
@@ -39,7 +50,8 @@ if __name__ == '__main__':
     
     if args.parallel:
         with torch.no_grad():
-            token_out, state_out = model.forward_parallel(token, state)
+            # token_out, state = model.forward_parallel(token, state)
+            token_out, state = model.forward_parallel_slices(token, state, slice_len=128)
             out = token_out[:, -1] # 取最后一个生成的token
     else:
         # 预填充状态
@@ -58,12 +70,12 @@ if __name__ == '__main__':
         token_sampled = sample_logits(out, TEMPERATURE, TOP_P)
         token = torch.cat((token, token_sampled.unsqueeze(1)), 1)
         with torch.no_grad():
-            out, state = model.forward(token_sampled , state)
+            out, state = model.forward(token_sampled, state)
         # 清除屏幕并打印结果
         os.system('cls' if os.name == 'nt' else 'clear')
         decoded_sequences = tokenizer.decode(token.cpu().tolist())
         for i, seq in enumerate(decoded_sequences):
-            print(f"Batch {i+1}: {seq}")
+           print(f"Batch {i+1}: {seq}")
 
     end_time = time.time() # 结束计时
 

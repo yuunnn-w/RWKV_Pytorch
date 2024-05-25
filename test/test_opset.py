@@ -1,6 +1,7 @@
 import time
 import sys
 import os
+import gc
 # 获取当前脚本文件的路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
 # 构建 'src' 目录的相对路径
@@ -40,8 +41,6 @@ if __name__ == '__main__':
         model = RWKV_RNN(args).to(device)
         tokenizer = RWKV_TOKENIZER("./asset/rwkv_vocab_v20230424.txt")
         print(model)
-        import time
-        #time.sleep(10)
         print("Done.")
     
         # 设置续写的初始字符串和参数
@@ -61,7 +60,7 @@ if __name__ == '__main__':
         token = torch.tensor(encoded_input).long().to(device)  # 转置以匹配模型输入的形状
     
         # 初始化状态
-        state = torch.zeros(batch_size, model.state_size[0], model.state_size[1]).to(device)  # 根据模型的state_size和n_embd初始化状态
+        state = model.init_state(batch_size).to(device)  # 根据模型的state_size和n_embd初始化状态
     
         # 预填充状态
         if args['parrallel'] == "True":
@@ -89,6 +88,8 @@ if __name__ == '__main__':
             
             decoded_sequences = tokenizer.decode(token.cpu().tolist())
         
+        del model, state, tokenizer, token, out
+        gc.collect()
         results.append(decoded_sequences)
 
     print(results)

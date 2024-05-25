@@ -7,7 +7,6 @@ if __name__ == '__main__':
     # 初始化模型参数
     with open("train/params.json", "r") as f:
         args:ModelArgs = ModelArgs.from_dict(json.load(f))
-
     # 加载模型
     print(f"Loading model {args['MODEL_NAME']}.pth...")
     model = RWKV_RNN(args)
@@ -26,9 +25,13 @@ if __name__ == '__main__':
         os.makedirs(outputdir, exist_ok=True)
     # 导出模型
     print("\nExport Onnx...")
+
+    outputdir = f"./onnx/rwkv/"
+    if not os.path.exists(outputdir):
+        os.makedirs(outputdir)
     torch.onnx.export(model,
                       (example_token, example_state),
-                      f"{outputdir}{args.MODEL_NAME.split('/')[-1]}.onnx",
+                      f"{outputdir}{args['MODEL_NAME'].split('/')[-1].replace(".pth","")}.onnx",
                       export_params=True,
                       verbose=True,
                       opset_version=16, #LayerNorm最低支持是op17

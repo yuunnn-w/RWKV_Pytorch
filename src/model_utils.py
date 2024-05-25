@@ -253,7 +253,15 @@ def device_checker(args):
     return args
 
 def device_specific_empty_cache(args):
-    pass
+    if args['device'] == 'cuda':
+        torch.cuda.empty_cache()
+    elif args['device'] == 'musa':
+        torch.musa.empty_cache()
+    elif args['device'] == 'xpu':
+        torch.xpu.empty_cache()
+    elif args['device'] == 'npu':
+        torch.npu.empty_cache()
 
 def device_specific_model_compile(args):
-    pass
+    if args['device'] == 'cuda' or args['device'] == 'xpu' or args['device'] == 'npu':
+        model = torch.compile(model)
