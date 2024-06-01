@@ -25,10 +25,6 @@ if __name__ == '__main__':
         os.makedirs(outputdir, exist_ok=True)
     # 导出模型
     print("\nExport Onnx...")
-
-    outputdir = f"./onnx/rwkv/"
-    if not os.path.exists(outputdir):
-        os.makedirs(outputdir)
     torch.onnx.export(model,
                       (example_token, example_state),
                       f"{outputdir}{args['MODEL_NAME'].split('/')[-1].replace(".pth","")}.onnx",
