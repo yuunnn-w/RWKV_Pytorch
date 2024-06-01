@@ -27,6 +27,12 @@ This is an inference framework for the RWKV large language model implemented pur
 3. 下载 RWKV6 模型，官方仓库地址：[BlinkDL/rwkv-6-world](https://huggingface.co/BlinkDL/rwkv-6-world/tree/main)，将模型权重放置在`weight`文件夹中。
 4. 修改 `main.py` 文件的 `MODEL_NAME` 参数。
 5. 执行 `python main.py`，即可看到batch推理效果。
+## 流水并行（pipeline parallel）使用方法
+1. 克隆仓库 `git clone -b pipeline https://github.com/yuunnn-w/RWKV_Pytorch.git`
+2. 执行 `cd RWKV_Pytorch` 进入仓库目录，执行 `pip install -r requirements.txt` 安装依赖。
+3. 下载 RWKV6 模型，官方仓库地址：[BlinkDL/rwkv-6-world](https://huggingface.co/BlinkDL/rwkv-6-world/tree/main)，将模型权重放置在`weight`文件夹中。
+4. 修改 `train/params.json` 文件的 `MODEL_NAME` 参数。
+5. 执行 `torchrun --nproc-per-node 3 train/train-parallel.py`开始训练。
 
 **Usage**
 1. Clone the repository: `git clone https://github.com/yuunnn-w/RWKV_Pytorch.git`
