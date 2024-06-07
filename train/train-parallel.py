@@ -73,16 +73,7 @@ def main(args:ModelArgs):
         x = y = torch.tensor([0])
         dataloader = [(x,y)] * datasize
     model.train()
-    def boardcast_iter(x, y):
-        if args.prev_id is None:
-            num_tok = torch.tensor([len(x)]).cuda()
-            dist.broadcast(num_tok,0)
-        else:
-            num_tok = torch.tensor([0]).cuda()
-            dist.broadcast(num_tok,0)
-            x = y = torch.zeros((num_tok,)).long().cuda()
-        dist.broadcast(y, 0)
-        return x,y
+    state_init = init_state(model)
     with torch.autograd.set_detect_anomaly(True):
         with tqdm(dataloader,disable=(args.rank_id != 0)) as tbar:
             for x,y in tbar:
@@ -90,7 +81,8 @@ def main(args:ModelArgs):
                 y=y[0].cuda()
                 x,y = boardcast_iter(x,y)
                 optimizer.zero_grad()
-                loss = wrapper.train_with_interleaving(x,y,criterion)
+                state = state_init.clone().detach()
+                loss = wrapper.train_with_interleaving(x,y,state,criterion)
                 if loss is not None:
                     tbar.set_postfix(loss=loss.item())
                 optimizer.step()
@@ -110,13 +102,38 @@ def main(args:ModelArgs):
     save_time = save_time - end_time
     dist.barrier()
     print(f"RANK[{args.rank_id}]程序运行时间：{execution_time:.2f}秒，保存模型耗时：{save_time:.2f}秒\n",end='')
-    if args.prev_id is None:
+    if args.rank_id == 0:
         state_dict = {}
         for i in range(args.world_size):
             state_part = torch.load(f'weight/checkpoint-final-{i}.pth')
             state_dict = {**state_dict,**state_part}
             os.remove(f'weight/checkpoint-final-{i}.pth')
         torch.save(state_dict,f'weight/checkpoint-final.pth')
+
+def boardcast_iter(x, y):
+    if args.prev_id is None:
+        num_tok = torch.tensor([len(x)]).cuda()
+        dist.broadcast(num_tok,0)
+    else:
+        num_tok = torch.tensor([0]).cuda()
+        dist.broadcast(num_tok,0)
+        x = y = torch.zeros((num_tok,)).long().cuda()
+    dist.broadcast(y, 0)
+    return x,y
+
+def init_state(model:RWKV_RNN) -> torch.Tensor:
+    state = torch.empty((1, model.block_num * (2 + model.head_size), model.n_embd),dtype=model.datatype).cuda()
+    if args.rank_id == 0:
+        slice_size = model.block_num * (2 + model.head_size)
+        state_init = model.init_state(batch_size=1).cuda()
+        scatter_list = []
+        for i in range(args.world_size - 1):
+            scatter_list += [state_init[:, (i * slice_size):((i + 1) * slice_size), :]]
+        scatter_list += [state_init[:, ((args.world_size - 1) * slice_size):, :]]
+        dist.scatter(state, scatter_list=scatter_list, src=0)
+    else:
+        dist.scatter(state, src=0)
+    return state
 
 def init_process(args:ModelArgs):
     """ Initialize the distributed environment. """

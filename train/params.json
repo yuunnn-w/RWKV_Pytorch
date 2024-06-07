@@ -1,5 +1,5 @@
 {
-  "MODEL_NAME": "./weight/checkpoint-final",
+  "MODEL_NAME": "./weight/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth",
   "TOKENIZER_PATH": "asset/rwkv_vocab_v20230424.txt",
   "DATASET_PATH": "data/sample.jsonl",
   "device": "cuda",

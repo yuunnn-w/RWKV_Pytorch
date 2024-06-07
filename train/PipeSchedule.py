@@ -84,14 +84,13 @@ class PipeSchedule:
                 for _ in range(parallel_size):
                     self.backward()
                 start += parallel_size
-    def train_with_interleaving(self,x,y,loss_fn):
+    def train_with_interleaving(self,x,y,state,loss_fn):
         分段长度=self.model.args.token_limit
         num_tok = torch.tensor([len(x)])
         input_mask = torch.arange(torch.ceil((num_tok - 1) / 分段长度).item() + 1,dtype=torch.long) * 分段长度
         input_mask[-1] = min(input_mask[-1],num_tok)
         batch_size = len(input_mask) - 1
         self.output_tensors = []
-        state = torch.zeros((1,self.model.block_num * (self.model.head_size+2),self.model.n_embd),dtype=self.model.datatype).cuda()
         loss_total = torch.tensor([0.0],dtype=self.model.datatype).cuda()
         if self.next_id is None:
             for i in range(batch_size):
