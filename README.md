@@ -153,6 +153,13 @@ We are very happy to support various hardware devices, including but not limited
                     <sub><b>Null</b></sub>
                 </a>
             </td>
+            <td align="center">
+                <a href="https://github.com/Aknifejackzhmolong">
+                    <img src="https://avatars.githubusercontent.com/u/23431216?v=4" width="100;" alt="Aknifejackzhmolong"/>
+                    <br />
+                    <sub><b>Dejiao Zeng</b></sub>
+                </a>
+            </td>
 		</tr>
 	<tbody>
 </table>
