@@ -1,0 +1,7 @@
+{
+    "user": "木子",
+    "bot": "墨子",
+    "separator": ":",
+    "prompt": "prompt/mozi_v6n.init",
+    ".ignore": "(\\[.+?\\]|\\(.+?\\))"
+}
