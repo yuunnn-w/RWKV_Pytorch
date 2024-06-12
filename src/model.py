@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from typing import Tuple
+from tqdm import tqdm
 
 
 class RWKV_Block(nn.Module):
@@ -362,7 +363,7 @@ class RWKV_RNN(nn.Module):
         
         # 将所有权重转换为float32
         self.num_layer = 0
-        for k in w.keys():
+        for k in tqdm(w.keys(), desc="Loading model", unit="layer"):
             w[k] = w[k].float()
             if '.time_' in k: w[k] = w[k].squeeze()
             if '.time_faaaa' in k: w[k] = w[k].unsqueeze(-1)
