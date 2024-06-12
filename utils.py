@@ -5,7 +5,7 @@ import asyncio
 import string
 import quart
 
-from config import MODEL_TYPE, MODEL_NAME
+from config import MODEL_NAME
 
 def prxxx(*args, q: bool = False, from_debug=False, **kwargs):
     if q:

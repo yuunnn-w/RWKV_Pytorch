@@ -1,6 +1,5 @@
 import torch
 import torch.nn.functional as F
-from config import RWKV_USE_GPU
 
 def old_sample_logits(
     out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.8

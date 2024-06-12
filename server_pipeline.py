@@ -9,12 +9,11 @@ import json
 import tqdm
 import time
 import torch
-import sampler
 import asyncio
 import copy
 import re
 from src.model import RWKV_RNN
-from src.sampler import sample_logits
+from src import sampler
 from src.rwkv_tokenizer import RWKV_TOKENIZER
 
 # from tokenizer_util import get_tokenizer
@@ -27,8 +26,7 @@ from utils import (
     use_async_lock,
     check_dir_async,
     check_file_async,
-    run_in_async_thread,
-    Args
+    run_in_async_thread
 )
 
 from config import (

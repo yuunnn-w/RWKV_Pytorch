@@ -53,7 +53,7 @@ APP_TEST_MESSAGE: str = """告诉我关于你的一切。"""
 CHAT_LANGUAGE: str = "Chinese"
 # QA: Question and Answer prompt to talk to an AI assistant.
 # Chat: chat prompt (need a large model for adequate quality, 7B+).
-CHAT_PROMPT_TYPE: str = "Chat-MoZi-C"
+CHAT_PROMPT_TYPE: str = "Chat-MoZi-N"
 
 
 # ======================================== Gener settings =========================================
