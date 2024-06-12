@@ -1,7 +1,9 @@
 import torch
 import torch.nn.functional as F
 
-def old_sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.8) -> torch.Tensor:
+def old_sample_logits(
+    out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.8
+) -> torch.Tensor:
     """
     对模型输出的logits进行采样。
 
@@ -24,9 +26,15 @@ def old_sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float 
     sorted_probs, _ = torch.sort(probs, descending=True)
     cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
     cutoff_mask = (cumulative_probs > top_p).float()
-    cutoff_index = torch.argmax(cutoff_mask * torch.arange(cutoff_mask.shape[-1], device=cutoff_mask.device).float(), dim=-1)
+    cutoff_index = torch.argmax(
+        cutoff_mask
+        * torch.arange(cutoff_mask.shape[-1], device=cutoff_mask.device).float(),
+        dim=-1,
+    )
     cutoff_values = sorted_probs.gather(-1, cutoff_index.unsqueeze(-1)).squeeze(-1)
-    probs = torch.where(probs < cutoff_values.unsqueeze(-1), torch.zeros_like(probs), probs)
+    probs = torch.where(
+        probs < cutoff_values.unsqueeze(-1), torch.zeros_like(probs), probs
+    )
 
     # 对概率分布进行温度调节
     if temperature != 1.0:
@@ -40,13 +48,15 @@ def old_sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float 
         sampled_indices = torch.multinomial(probs, num_samples=1)
     else:
         sampled_indices = torch.argmax(probs, dim=-1, keepdim=True)
-        
 
     return sampled_indices
 
-def sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.8) -> torch.Tensor:
+
+def probs_logits(
+    out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.8
+) -> torch.Tensor:
     """
-    Sample from the logits tensor produced by the model.
+    Probs from the logits tensor produced by the model.
 
     Args:
         out (torch.Tensor): Logits tensor from the model, shape [* , vocab_size].
@@ -75,7 +85,9 @@ def sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.
     sorted_indices_to_remove[..., 0] = 0
 
     # Create a mask for the indices to remove
-    indices_to_remove = sorted_indices_to_remove.scatter(dim=-1, index=sorted_indices, src=sorted_indices_to_remove)
+    indices_to_remove = sorted_indices_to_remove.scatter(
+        dim=-1, index=sorted_indices, src=sorted_indices_to_remove
+    )
 
     # Use the mask to zero out probabilities that should be removed
     probabilities.masked_fill_(indices_to_remove, 0.0)
@@ -85,7 +97,29 @@ def sample_logits(out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.
         probabilities = torch.ones_like(probabilities)
         probabilities /= probabilities.sum()
 
+    return probabilities
+
+
+
+def sample_logits(
+    out: torch.Tensor, temperature: float = 1.0, top_p: float = 0.8
+) -> torch.Tensor:
+    """
+    Sample from the logits tensor produced by the model.
+
+    Args:
+        out (torch.Tensor): Logits tensor from the model, shape [* , vocab_size].
+        temperature (float): Temperature parameter for controlling the diversity of sampling. Default is 1.0.
+        top_p (float): Top-p truncation parameter for stabilizing and controlling the sampling probability distribution. Default is 0.8.
+
+    Returns:
+        torch.Tensor: Sampled indices, shape [*].
+    """
+
+    probabilities = probs_logits(out, temperature, top_p)
     # Sample from the modified distribution
     sampled_indices = torch.multinomial(probabilities, 1)
 
     return sampled_indices.squeeze(-1)
+
+
