@@ -383,7 +383,7 @@ class RWKV_Block(MyModule):
             x = x + self.channel_mixing(self.manual_layer_norm(x, self.ln2_weight, self.ln2_bias, 1e-5), state, i)
         return x
 
-    def forward_parallel(self, x: torch.Tensor, state: torch.Tensor, i: int) -> torch.Tensor:
+    def forward_parallel(self, x: torch.Tensor, state: torch.Tensor, i: int, training:bool = False) -> torch.Tensor:
         """
         模型的并行前向传播。
         Args:
@@ -394,10 +394,10 @@ class RWKV_Block(MyModule):
             torch.Tensor: 前向传播结果张量，形状与输入的x相同。
         """
         if self.onnx_opset >= 17:
-            x = x + self.time_mixing_parallel(self.ln1(x), state, i)
+            x = x + self.time_mixing_parallel(self.ln1(x), state, i, training=training)
             x = x + self.channel_mixing_parallel(self.ln2(x), state, i)
         else:
-            x = x + self.time_mixing_parallel(self.manual_layer_norm(x, self.ln1_weight, self.ln1_bias, 1e-5), state, i)
+            x = x + self.time_mixing_parallel(self.manual_layer_norm(x, self.ln1_weight, self.ln1_bias, 1e-5), state, i, training=training)
             x = x + self.channel_mixing_parallel(self.manual_layer_norm(x, self.ln2_weight, self.ln2_bias, 1e-5), state, i)
         return x
 
@@ -550,7 +550,7 @@ class RWKV_RNN(MyModule):
             x = self.head(x)
         return x, state
 
-    def forward_parallel(self, token: torch.Tensor, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward_parallel(self, token: torch.Tensor, state: torch.Tensor, training:bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         模型的并行前向传播。
         Args:
@@ -566,7 +566,7 @@ class RWKV_RNN(MyModule):
             x = self.manual_layer_norm(x, self.ln0_weight, self.ln0_bias, 1e-5)
         # 开始循环推理RWKV Block   
         for i, block in enumerate(self.blocks):
-            x = block.forward_parallel(x, state, i)
+            x = block.forward_parallel(x, state, i, training=training)
         if self.onnx_opset >= 17:
             x = self.forward_jit2(x)
         else:
