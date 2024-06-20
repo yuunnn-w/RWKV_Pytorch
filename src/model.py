@@ -582,7 +582,7 @@ class RWKV_RNN(MyModule):
     def forward_jit2(self, x: torch.Tensor) -> torch.Tensor:
         return self.head(self.ln_out(x))
 
-  
+    @torch.no_grad()
     def forward_parallel_slices(self, token: torch.Tensor, state: torch.Tensor, slice_len: int = 64) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         模型的分段并行前向传播，减少显存/内存使用。
@@ -597,8 +597,7 @@ class RWKV_RNN(MyModule):
             start = i*slice_len
             end = min((i+1)*slice_len, data_len)
             token_i = token[:, start:end]
-            token_out, state_new = self.forward_parallel(token_i, state)
-            state = state_new.detach()  # 使用 detach() 截断梯度传播, 训练使用
+            token_out, state = self.forward_parallel(token_i, state)
         
         return token_out, state
 

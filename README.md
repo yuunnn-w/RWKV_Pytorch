@@ -67,12 +67,6 @@ We are very happy to support various hardware devices, including but not limited
 3. Use any client that conforms to the **OpenAI API** specifications, and fill in `http://127.0.0.1:8848` as the `API_URL` parameter to experience it.
 
 
-## 已知的问题：
-- **已知op17版本才支持LayerNorm算子，op18版本才支持GroupNorm算子，目前torch的preview版本支持op18，但是无法导出，current版本只支持op17，能够正常导出含LayerNorm算子的模型。你可以参照main.py 使用opset参数指定**
-
-**Known Issues:** 
-- **LayerNorm operators are supported in op17 version, while GroupNorm operators are supported in op18 version. The current torch preview version supports op18 but cannot be exported. The current version only supports op17 and can export models containing LayerNorm operators. You can use parameter similar in main.py to support lower op_set versions.**
-
 
 **注意，本框架目前仅支持RWKV v6模型，具体版本号为x060**
 
@@ -82,38 +76,6 @@ We are very happy to support various hardware devices, including but not limited
 ## 预计未来基于本项目适配香橙派推出的AI Pro开发板，实现在昇腾的生态上推理国产大语言模型RWKV！！！
 
 **In the future, based on this project, adaptation for the AI Pro development board launched by Xunlong Orange Pi is planned to enable inference of the domestic large language model RWKV on the Ascend ecosystem!!!**
-****
-
-### 另外，经过测试，v6 1.6B导出并优化后的onnx模型含有如下算子：
-
-**Additionally, after testing, the ONNX model exported and optimized from v6 1.6B contains the following operators:**
-
-- Operator Type: `Gather`, Count: 145
-- Operator Type: `Squeeze`, Count: 121
-- Operator Type: `ReduceMean`, Count: 148
-- Operator Type: `Sub`, Count: 122
-- Operator Type: `Mul`, Count: 484
-- Operator Type: `Add`, Count: 675
-- Operator Type: `Sqrt`, Count: 74
-- Operator Type: `Div`, Count: 74
-- Operator Type: `Shape`, Count: 240
-- Operator Type: `Expand`, Count: 240
-- Operator Type: `Range`, Count: 72
-- Operator Type: `Reshape`, Count: 384
-- Operator Type: `Equal`, Count: 72
-- Operator Type: `Where`, Count: 72
-- Operator Type: `Unsqueeze`, Count: 192
-- Operator Type: `Concat`, Count: 192
-- Operator Type: `ScatterND`, Count: 72
-- Operator Type: `MatMul`, Count: 337
-- Operator Type: `Tanh`, Count: 48
-- Operator Type: `Split`, Count: 24
-- Operator Type: `Exp`, Count: 48
-- Operator Type: `Neg`, Count: 24
-- Operator Type: `Sigmoid`, Count: 48
-- Operator Type: `Slice`, Count: 24
-- Operator Type: `Flatten`, Count: 24
-- Operator Type: `Relu`, Count: 24
 
 ****
 
