@@ -25,6 +25,7 @@ if __name__ == '__main__':
     # 加载模型和分词器
     print("Loading model and tokenizer...")
     model = RWKV_RNN(args).to(device)
+    model = torch.compile(model)
     tokenizer = RWKV_TOKENIZER("asset/rwkv_vocab_v20230424.txt")
         
     print(model)
