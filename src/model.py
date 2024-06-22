@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Tuple
+from typing import Tuple, Callable
 from .model_utils import RWKV_x060
 
 
@@ -536,14 +536,18 @@ class RWKV_RNN(nn.Module):
         x = self.head(x)
         return x, state
     
-    def forward_parallel_slices(self, token: torch.Tensor, state: torch.Tensor, slice_len: int = 64) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward_parallel_slices(self, token: torch.Tensor, state: torch.Tensor, slice_len: int = 64, call_back:Callable[[int, int, int, torch.Tensor, torch.Tensor], bool] | None = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         模型的分段并行前向传播，减少显存/内存使用。
         Args:
             token (torch.Tensor): 输入的令牌张量。[Batch_size, L]
             state (torch.Tensor): 隐藏状态张量。[Batch_size, State_size, N_embd]
+            slice_len (int): 分块大小。
+            call_back (Callable[[int, int, int, torch.Tensor, torch.Tensor], bool]): 每块后的回调。
+                分别为：块编号，块头，块尾，输入token，输出token，是否终止
         Returns:
             torch.Tensor: 模型输出。
+
         """
         data_len = token.shape[1]
         for i in range((data_len-2)//slice_len+1):
@@ -552,6 +556,9 @@ class RWKV_RNN(nn.Module):
             token_i = token[:, start:end]
             token_out, state_new = self.forward_parallel(token_i, state)
             state = state_new.detach()  # 使用 detach() 截断梯度传播, 训练使用
+            
+            if (call_back is not None) and call_back(i, start, end, token_i, token_out):
+                break
         
         return token_out, state
 
