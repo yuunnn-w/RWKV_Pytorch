@@ -105,19 +105,18 @@ for epoch in range(epochs):
             param = initial_state
             if param.grad is not None:
                 param.grad *= prev_scale_factor
-            # FIXME: 使用类自带的 forward_parallel_slices 方法
-            for i in range((data_len-2)//slice_len+1):
-                start = i*slice_len
-                end = min((i+1)*slice_len, data_len)
-                x_i = x[:, start:end]
+            
+            def call_back(i:int, start:int, end:int, x_i:torch.Tensor, x_o:torch.Tensor, *args, **kwargs):
+                global accumulated_loss # 函数套函数时用 nonlocal accumulated_loss
                 y_i = y[0, start:end]
                 current_slice_len = x_i.shape[1]
-                token_out, state_new = model.forward_parallel(x_i, state)
-                state = state_new.detach()  # 使用 detach() 截断梯度传播
-                loss = criterion(token_out[0], y_i)
+                loss = criterion(x_o[0], y_i)
                 loss_weight = loss * (current_slice_len / total_length)
                 accumulated_loss += loss_weight.item()
                 loss_weight.backward()
+                return False
+            
+            model.forward_parallel_slices(x, state, slice_len, call_back)
 
             prev_total_length = total_length
 
