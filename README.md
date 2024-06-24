@@ -88,6 +88,13 @@ We are very happy to support various hardware devices, including but not limited
 	<tbody>
 		<tr>
             <td align="center">
+                <a href="https://github.com/uniartisan">
+                    <img src="https://avatars.githubusercontent.com/u/31544054?v=4" width="100;" alt="uniartisan"/>
+                    <br />
+                    <sub><b>Zhiyuan Li</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/yuunnn-w">
                     <img src="https://avatars.githubusercontent.com/u/91336323?v=4" width="100;" alt="yuunnn-w"/>
                     <br />
@@ -102,17 +109,17 @@ We are very happy to support various hardware devices, including but not limited
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/uniartisan">
-                    <img src="https://avatars.githubusercontent.com/u/31544054?v=4" width="100;" alt="uniartisan"/>
-                    <br />
-                    <sub><b>Zhiyuan Li</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/jiamingkong">
                     <img src="https://avatars.githubusercontent.com/u/2761215?v=4" width="100;" alt="jiamingkong"/>
                     <br />
                     <sub><b>Null</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/Aknifejackzhmolong">
+                    <img src="https://avatars.githubusercontent.com/u/23431216?v=4" width="100;" alt="Aknifejackzhmolong"/>
+                    <br />
+                    <sub><b>Dejiao Zeng</b></sub>
                 </a>
             </td>
 		</tr>
