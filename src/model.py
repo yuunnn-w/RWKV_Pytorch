@@ -12,6 +12,8 @@ import torch.nn.functional as F
 import numpy as np
 from typing import Tuple
 from .model_utils import RWKV_x060
+import gc
+import math
 
 def __nop(ob):
     return ob
@@ -27,96 +29,199 @@ try:
 except:
     print("JIT OFF")
 
-class RWKV_Block(MyModule):
+class RWKV_Block(nn.Module):
     """
     RWKV模型的块结构。
-
     Args:
-        block_w (dict): 权重字典。
-        n_embd (int): 嵌入维度。
-        n_head (int): 头数。
+        args(dict): 参数字典
+            'onnx_opset' (int): onnx算子版本 18
+            'n_embd' (int): 隐藏层大小 2048
+            'n_head' (int): 头数 32
+            'head_size' (int): 头大小 64
+            'dim_att' (int): 必须等于头数×头大小，等于n_embd 2048 
+            'dim_fnn' (int): FNN层的维度 7168
+            'head_size_divisor' (int): 头大小的除数 8
+            'vocab_size' (int): 词表大小 65536
+            'n_layer' (int): 层数 23
+            'device' (str): 设备 'cuda'
+        block_w (dict or None): 预训练权重字典 dict/None
+        layer_id (int): 层索引 0
     """
-    def __init__(self, block_w: dict, n_embd: int, n_head: int, args: dict, onnx_opset = 16):
-        super().__init__()
-        self.n_embd = n_embd
-        self.n_head = n_head
-        self.head_size = n_embd // n_head
-        self.onnx_opset = onnx_opset
+    def __init__(self, args: dict, block_w: dict, layer_id: int):
+        super(RWKV_Block, self).__init__()
+        self.n_embd = args['n_embd']
+        self.n_head = args['n_head']
+        self.head_size = args['head_size']
+        self.onnx_opset = args['onnx_opset']
+        self.layer_id = layer_id
+        assert args['n_embd'] == args['dim_att']
+        assert args['dim_ffn'] == int((args['n_embd'] * 3.5) // 32 * 32)
+        assert args['n_embd'] % 32 == 0
+        assert args['dim_att'] % 32 == 0
+        assert args['dim_ffn'] % 32 == 0
+        assert args['dim_att'] == args['n_head'] * args['head_size'], "参数 dim_att 必须等于 n_head * head_size"
 
-        # 初始化层归一化
-        if self.onnx_opset >= 17:
-            self.ln1 = nn.LayerNorm(n_embd)
-            self.ln1.weight = nn.Parameter(block_w['ln1.weight'])
-            self.ln1.bias = nn.Parameter(block_w['ln1.bias'])
-            self.ln2 = nn.LayerNorm(n_embd)
-            self.ln2.weight = nn.Parameter(block_w['ln2.weight'])
-            self.ln2.bias = nn.Parameter(block_w['ln2.bias'])
-        else:
-            self.ln1_weight = nn.Parameter(block_w['ln1.weight'])
-            self.ln1_bias = nn.Parameter(block_w['ln1.bias'])
-            self.ln2_weight = nn.Parameter(block_w['ln2.weight'])
-            self.ln2_bias = nn.Parameter(block_w['ln2.bias'])
+        # 检查 args['weight'] 是否存在或为 None
+        if block_w is None:
+            # 模型为主动初始化，需要全部的参数
+            required_keys = ['onnx_opset', 'n_embd', 'n_head', 'head_size', 'dim_att', 'dim_ffn', 
+                             'head_size_divisor', 'vocab_size', 'n_layer', 'device']
+            for key in required_keys:
+                assert key in args, f"参数 {key} 缺失"
+                assert isinstance(args[key], int) if key != 'device' else isinstance(args[key], str), f"参数 {key} 类型错误"
 
-        # 初始化激活函数
-        self.silu = nn.SiLU(inplace=False)
+            # 校验 dim_att 是否等于 n_head * head_size
+            assert args['dim_att'] == args['n_head'] * args['head_size'], "参数 dim_att 必须等于 n_head * head_size"
+            assert args['onnx_opset'] >= 18, "主动初始化要求 onnx_opset 参数大于等于 18！"  
+            # 这里初始化所有参数
+            with torch.no_grad():
+                self.ln1 = nn.LayerNorm(args['n_embd'])
+                self.ln2 = nn.LayerNorm(args['n_embd'])
+                self.silu = nn.SiLU(inplace=False)
+                ratio_0_to_1 = layer_id / (args['n_layer'] - 1)  # 0 to 1
+                ratio_1_to_almost0 = 1.0 - (layer_id / args['n_layer'])  # 1 to ~0
+                ddd = torch.ones(args['n_embd'])
+                for i in range(args['n_embd']):
+                    ddd[i] = i / args['n_embd']
+                self.att_stacked_weights = (
+                    torch.stack(
+                        [
+                            nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0)),
+                            nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0)),
+                            nn.Parameter(1.0 - (torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)),
+                            nn.Parameter(1.0 - torch.pow(ddd, 0.5 * ratio_1_to_almost0)),
+                            nn.Parameter(1.0 - torch.pow(ddd, 0.5 * ratio_1_to_almost0)),
+                        ],
+                        dim=0,
+                    )
+                    .unsqueeze(0)
+                    .to(args['device'])  # shape: (1, 1, 5, hidden_size)
+                )
+                self.att_time_maa_x = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0))
+                
+                D_MIX_LORA = 32 # generate TIME_MIX for w,k,v,r,g
+                self.att_time_maa_w1 = nn.Parameter(torch.zeros(args['n_embd'], D_MIX_LORA*5))
+                self.att_time_maa_w2 = nn.Parameter(torch.zeros(5, D_MIX_LORA, args['n_embd']).uniform_(-0.01, 0.01))
+                
+                # fancy time_decay
+                decay_speed = torch.ones(args['dim_att'])
+                for n in range(args['dim_att']):
+                    decay_speed[n] = -6 + 5 * (n / (args['dim_att'] - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
+                self.att_time_decay = nn.Parameter(decay_speed.reshape(args['dim_att']))
 
-        # 初始化注意力参数
-        self.att_time_maa_x = nn.Parameter(block_w['att.time_maa_x'])
-        # self.att_time_maa_w = nn.Parameter(block_w['att.time_maa_w'])
-        # self.att_time_maa_k = nn.Parameter(block_w['att.time_maa_k'])
-        # self.att_time_maa_v = nn.Parameter(block_w['att.time_maa_v'])
-        # self.att_time_maa_r = nn.Parameter(block_w['att.time_maa_r'])
-        # self.att_time_maa_g = nn.Parameter(block_w['att.time_maa_g'])
-        self.att_time_maa_w1 = nn.Parameter(block_w['att.time_maa_w1'])
-        self.att_time_maa_w2 = nn.Parameter(block_w['att.time_maa_w2'])
-        self.att_time_decay = nn.Parameter(block_w['att.time_decay'])
-        self.att_time_decay_w1 = nn.Parameter(block_w['att.time_decay_w1'])
-        self.att_time_decay_w2 = nn.Parameter(block_w['att.time_decay_w2'])
-        self.att_time_faaaa = nn.Parameter(block_w['att.time_faaaa'])
-        self.att_receptance = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.att_receptance.weight = nn.Parameter(block_w['att.receptance.weight'])
-        self.att_key = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.att_key.weight = nn.Parameter(block_w['att.key.weight'])
-        self.att_value = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.att_value.weight = nn.Parameter(block_w['att.value.weight'])
-        self.att_output = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.att_output.weight = nn.Parameter(block_w['att.output.weight'])
-        self.att_gate = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.att_gate.weight = nn.Parameter(block_w['att.gate.weight'])
-
-        # 预先堆叠权重张量
-        self.att_stacked_weights = (
-            torch.stack(
-                [
-                    block_w['att.time_maa_k'],
-                    block_w['att.time_maa_w'],
-                    block_w['att.time_maa_v'],
-                    block_w['att.time_maa_r'],
-                    block_w['att.time_maa_g'],
-                ],
-                dim=0,
-            )
-            .unsqueeze(0)
-            .to(args['device'])  # shape: (1, 1, 5, hidden_size)
-        )
-
-        if self.onnx_opset >= 18:
-            self.att_group_norm = nn.GroupNorm(num_groups=n_head, num_channels=n_embd, eps=1e-5, affine=True)
-            self.att_group_norm.weight = nn.Parameter(block_w['att.ln_x.weight'])
-            self.att_group_norm.bias = nn.Parameter(block_w['att.ln_x.bias'])
-        else:
-            self.att_group_norm_weight = nn.Parameter(block_w['att.ln_x.weight'])
-            self.att_group_norm_bias = nn.Parameter(block_w['att.ln_x.bias'])
+                D_DECAY_LORA = 64
+                self.att_time_decay_w1 = nn.Parameter(torch.zeros(args['n_embd'], D_DECAY_LORA))
+                self.att_time_decay_w2 = nn.Parameter(torch.zeros(D_DECAY_LORA, args['dim_att']).uniform_(-0.01, 0.01))
+                
+                tmp = torch.zeros(args['dim_att'])
+                for n in range(args['dim_att']):
+                    zigzag = ((n + 1) % 3 - 1) * 0.1
+                    tmp[n] = ratio_0_to_1 * (1 - (n / (args['dim_att'] - 1))) + zigzag
+                self.att_time_faaaa = nn.Parameter(tmp.reshape(args['n_head'], args['head_size']))
+                
+                self.att_receptance = nn.Linear(args['n_embd'], args['dim_att'], bias=False)
+                self.att_key = nn.Linear(args['n_embd'], args['dim_att'], bias=False)
+                self.att_value = nn.Linear(args['n_embd'], args['dim_att'], bias=False)
+                self.att_output = nn.Linear(args['dim_att'], args['n_embd'], bias=False)
+                self.att_gate = nn.Linear(args['n_embd'], args['dim_att'], bias=False)
+                self.att_group_norm = nn.GroupNorm(self.n_head, args['dim_att'], eps=(1e-5)*(args['head_size_divisor']**2))
+                
+                ################ Channel Mix ↓
+                #ratio_1_to_almost0 = 1.0 - (layer_id / args['n_layer'])
+                #ddd = torch.ones(1, 1, args['n_embd'])
+                self.ffn_time_maa_k = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0))
+                self.ffn_time_maa_r = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0))
+                self.ffn_key = nn.Linear(args['n_embd'], args['dim_ffn'], bias=False)
+                self.ffn_receptance = nn.Linear(args['n_embd'], args['n_embd'], bias=False)
+                self.ffn_value = nn.Linear(args['dim_ffn'], args['n_embd'], bias=False)
             
-        # 初始化前馈参数
-        self.ffn_time_maa_k = nn.Parameter(block_w['ffn.time_maa_k'])
-        self.ffn_time_maa_r = nn.Parameter(block_w['ffn.time_maa_r'])
-        self.ffn_key = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.ffn_key.weight = nn.Parameter(block_w['ffn.key.weight'])
-        self.ffn_receptance = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.ffn_receptance.weight = nn.Parameter(block_w['ffn.receptance.weight'])
-        self.ffn_value = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.ffn_value.weight = nn.Parameter(block_w['ffn.value.weight'])
+            
+        else:
+            # 模型加载预训练权重，需要的参数
+            required_keys = ['onnx_opset', 'device', 'n_embd', 'dim_att', 'dim_ffn', 'n_head']
+            for key in required_keys:
+                assert key in args, f"参数 {key} 缺失"
+            assert isinstance(block_w, dict), f"参数 block_w 类型错误"
+            assert isinstance(args['onnx_opset'], int), f"参数 onnx_opset 类型错误"
+            assert isinstance(args['device'], str), f"参数 device 类型错误"
+            assert isinstance(args['n_embd'], int), f"参数 n_embd 类型错误"
+            assert isinstance(args['dim_att'], int), f"参数 dim_att 类型错误"
+            assert isinstance(args['dim_ffn'], int), f"参数 dim_ffn 类型错误"
+            assert isinstance(args['n_head'], int), f"参数 n_head 类型错误"
+            # 校验 dim_att 是否等于 n_head * head_size
+            assert args['dim_att'] == args['n_head'] * args.get('head_size', args['dim_att'] // args['n_head']), "参数 dim_att 必须等于 n_head * head_size"
+            # 初始化层归一化
+            if args['onnx_opset'] >= 17:
+                self.ln1 = nn.LayerNorm(args['n_embd'])
+                self.ln1.weight = nn.Parameter(block_w['ln1.weight'])
+                self.ln1.bias = nn.Parameter(block_w['ln1.bias'])
+                self.ln2 = nn.LayerNorm(args['n_embd'])
+                self.ln2.weight = nn.Parameter(block_w['ln2.weight'])
+                self.ln2.bias = nn.Parameter(block_w['ln2.bias'])
+            else:
+                self.ln1_weight = nn.Parameter(block_w['ln1.weight'])
+                self.ln1_bias = nn.Parameter(block_w['ln1.bias'])
+                self.ln2_weight = nn.Parameter(block_w['ln2.weight'])
+                self.ln2_bias = nn.Parameter(block_w['ln2.bias'])
+
+            # 初始化激活函数
+            self.silu = nn.SiLU(inplace=False)
+            # 初始化注意力参数
+            self.att_time_maa_x = nn.Parameter(block_w['att.time_maa_x'])
+            # self.att_time_maa_w = nn.Parameter(block_w['att.time_maa_w'])
+            # self.att_time_maa_k = nn.Parameter(block_w['att.time_maa_k'])
+            # self.att_time_maa_v = nn.Parameter(block_w['att.time_maa_v'])
+            # self.att_time_maa_r = nn.Parameter(block_w['att.time_maa_r'])
+            # self.att_time_maa_g = nn.Parameter(block_w['att.time_maa_g'])
+            self.att_time_maa_w1 = nn.Parameter(block_w['att.time_maa_w1'])
+            self.att_time_maa_w2 = nn.Parameter(block_w['att.time_maa_w2'])
+            self.att_time_decay = nn.Parameter(block_w['att.time_decay'])
+            self.att_time_decay_w1 = nn.Parameter(block_w['att.time_decay_w1'])
+            self.att_time_decay_w2 = nn.Parameter(block_w['att.time_decay_w2'])
+            self.att_time_faaaa = nn.Parameter(block_w['att.time_faaaa'])
+            self.att_receptance = nn.Linear(args['n_embd'], args['dim_att'], bias=False)
+            self.att_receptance.weight = nn.Parameter(block_w['att.receptance.weight'])
+            self.att_key = nn.Linear(args['n_embd'], args['dim_att'], bias=False)
+            self.att_key.weight = nn.Parameter(block_w['att.key.weight'])
+            self.att_value = nn.Linear(args['n_embd'], args['dim_att'], bias=False)
+            self.att_value.weight = nn.Parameter(block_w['att.value.weight'])
+            self.att_output = nn.Linear(args['dim_att'], args['n_embd'], bias=False)
+            self.att_output.weight = nn.Parameter(block_w['att.output.weight'])
+            self.att_gate = nn.Linear(args['n_embd'], args['dim_att'], bias=False)
+            self.att_gate.weight = nn.Parameter(block_w['att.gate.weight'])
+            # 预先堆叠权重张量
+            self.att_stacked_weights = (
+                torch.stack(
+                    [
+                        block_w['att.time_maa_k'],
+                        block_w['att.time_maa_w'],
+                        block_w['att.time_maa_v'],
+                        block_w['att.time_maa_r'],
+                        block_w['att.time_maa_g'],
+                    ],
+                    dim=0,
+                )
+                .unsqueeze(0)
+                .to(args['device'])  # shape: (1, 1, 5, hidden_size)
+            )
+
+            if args['onnx_opset'] >= 18:
+                self.att_group_norm = nn.GroupNorm(num_groups=args['n_head'], num_channels=args['dim_att'], eps=1e-5, affine=True)
+                self.att_group_norm.weight = nn.Parameter(block_w['att.ln_x.weight'])
+                self.att_group_norm.bias = nn.Parameter(block_w['att.ln_x.bias'])
+            else:
+                self.att_group_norm_weight = nn.Parameter(block_w['att.ln_x.weight'])
+                self.att_group_norm_bias = nn.Parameter(block_w['att.ln_x.bias'])
+
+            # 初始化前馈参数
+            self.ffn_time_maa_k = nn.Parameter(block_w['ffn.time_maa_k'])
+            self.ffn_time_maa_r = nn.Parameter(block_w['ffn.time_maa_r'])
+            self.ffn_key = nn.Linear(args['n_embd'], args['dim_ffn'], bias=False)
+            self.ffn_key.weight = nn.Parameter(block_w['ffn.key.weight'])
+            self.ffn_receptance = nn.Linear(args['n_embd'], args['n_embd'], bias=False)
+            self.ffn_receptance.weight = nn.Parameter(block_w['ffn.receptance.weight'])
+            self.ffn_value = nn.Linear(args['dim_ffn'], args['n_embd'], bias=False)
+            self.ffn_value.weight = nn.Parameter(block_w['ffn.value.weight'])
 
     @MyFunction
     def manual_layer_norm(self, x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
@@ -434,29 +539,95 @@ class RWKV_RNN(MyModule):
         assert 'n_embd' in self.args
         assert 'n_layer' in self.args
         assert 'vocab_size' in self.args
-        if 'head_size_a' not in self.args:
-            self.args['head_size_a'] = 64
+        #assert 'n_head' in self.args
+            
+        if 'head_size' not in self.args:
+            self.args['head_size'] = 64
+        if 'n_head' not in self.args:
+            assert self.args['n_embd'] % self.args['head_size'] == 0
+            self.args['n_head'] = self.args['n_embd'] // self.args['head_size']
+        assert self.args['n_embd'] == self.args['head_size'] * self.args['n_head']
         if 'head_size_divisor' not in self.args:
             self.args['head_size_divisor'] = 8
+        self.args['dim_att'] = self.args['n_embd']
+        self.args['dim_ffn'] = int((self.args['n_embd'] * 3.5) // 32 * 32)
+        self.args['state_size'] = [self.args['n_layer'] * (2 + self.args['head_size']), self.args['n_embd']]
+        
+        self.emb = nn.Embedding(self.args['vocab_size'], self.args['n_embd'])
+        self.ln0 = nn.LayerNorm(self.args['n_embd'])
+        self.blocks = nn.ModuleList([RWKV_Block(self.args, None, i) for i in range(self.args['n_layer'])])
+        self.ln_out = nn.LayerNorm(self.args['n_embd'])
+        self.head = nn.Linear(self.args['n_embd'], self.args['vocab_size'], bias=False)
+        # 这里开始初始化参数值
+        m = self.state_dict()
+        n_params = 0
+        
+        for n in self.state_dict():
+            p = m[n]
+            shape = p.shape
 
-        model_init = RWKV_x060(self.args)
-        # 使用初始化的权重加载模型
-        self.load_params(load_from_file=False, w=model_init.state_dict())
-        del model_init
-        import gc
+            s0 = str(shape[0]) if len(shape) > 0 else ""
+            s1 = str(shape[1]) if len(shape) > 1 else ""
+            s2 = str(shape[2]) if len(shape) > 2 else ""
+            print(f"{s0.ljust(5)} {s1.ljust(5)} {s2.ljust(5)} {n}", end="")
+
+            scale = 1.0
+            if "ln" in n or "time_" in n or 'att_group_norm' in n or n.endswith(('_w', '_w1', '_w2', '_bias')):
+                if 'att_group_norm.weight' in n:
+                    layer_scale = (1+int(n.split('.')[1])) / self.args['n_layer']
+                    m[n] = (p * 0.0) + (layer_scale ** 0.7)
+                else:
+                    m[n] = p
+                print()
+            elif n == "emb.weight":
+                m[n] = p
+                scale = -1e-4
+                nn.init.uniform_(m[n], a=scale, b=-scale) # !!! If you are using positional embedding, maybe it's better to remove block.0.ln0, and use default initialization for emb.weight instead of my uniform_(a=-1e-4, b=1e-4) !!!
+                print(f" [scale {scale}]")
+            elif n == "head.weight":
+                m[n] = p
+                if self.args['vocab_size'] > self.args['n_embd']:
+                    scale = 0.5 * math.sqrt(self.args['vocab_size'] / self.args['n_embd'])
+                else:
+                    scale = 0.5
+                nn.init.orthogonal_(m[n], gain=scale)
+                print(f" [scale {scale}]")
+            else:
+                assert n.endswith('.weight') # should always be true
+
+                if any(kk in n for kk in [".att_output.", ".ffn_value.", ".ffn_receptance."]):
+                    scale = 0
+                elif any(kk in n for kk in [".att_key.", ".att_gate."]):
+                    scale = 0.1
+                print(f" [scale {scale}]")
+                m[n] = torch.empty((shape[0], shape[1]), device=p.device)
+                if scale == 0:
+                    nn.init.zeros_(m[n])
+                else:
+                    nn.init.orthogonal_(m[n], gain=scale)
+            # 转换数据格式
+            if self.dataformat == 'fp32':
+                m[n] = m[n].float()
+            elif self.dataformat == 'fp16':
+                m[n] = m[n].half()
+            elif self.dataformat == 'bf16':
+                m[n] = m[n].bfloat16()
+            
+            n_params += m[n].numel()
+        
+        print('model params: ', n_params)  
+        
         gc.collect()
+        torch.cuda.empty_cache()
 
 
-    def load_params(self, load_from_file: bool = True, w: dict = None):
-        if load_from_file:
-            if not self.args['MODEL_NAME'].endswith('.pth'):
-                self.args['MODEL_NAME'] += '.pth'
-            w = torch.load(self.args['MODEL_NAME'], map_location="cpu")
-        else:
-            assert w is not None
+    def load_params(self):
+        if not self.args['MODEL_NAME'].endswith('.pth'):
+            self.args['MODEL_NAME'] += '.pth'
+        w = torch.load(self.args['MODEL_NAME'], map_location="cpu")
         
         # 将所有权重转换为float32
-        self.num_layer = 0
+        self.args['n_layer'] = 0
         for k in w.keys():
             if self.dataformat == 'fp32':
                 w[k] = w[k].float()
@@ -466,21 +637,23 @@ class RWKV_RNN(MyModule):
                 w[k] = w[k].bfloat16()
             if '.time_' in k: w[k] = w[k].squeeze()
             if '.time_faaaa' in k: w[k] = w[k].unsqueeze(-1)
-            if "blocks" in k: self.num_layer = max(self.num_layer, int(k.split(".")[1]))
-        self.num_layer += 1
+            if "blocks" in k: self.args['n_layer'] = max(self.args['n_layer'], int(k.split(".")[1]))
+        self.args['n_layer'] += 1
 
-        self.n_head = w['blocks.0.att.time_faaaa'].shape[0]
-        self.n_embd = w['blocks.0.ln1.weight'].shape[0]
-        self.head_size = self.n_embd // self.n_head
-        self.state_size = [self.num_layer * (2 + self.head_size), self.n_embd]
+        self.args['n_head'] = w['blocks.0.att.time_faaaa'].shape[0]
+        self.args['n_embd'] = w['blocks.0.ln1.weight'].shape[0]
+        self.args['head_size'] = self.args['n_embd'] // self.args['n_head']
+        self.args['state_size'] = [self.args['n_layer'] * (2 + self.args['head_size']), self.args['n_embd']]
+        self.args['dim_att'] = self.args['n_embd']
+        self.args['dim_ffn'] = w['blocks.0.ffn.key.weight'].shape[0]
 
-        print(f"state_size:{self.state_size}") # 这里打印状态的形状
+        print(f"state_size:{self.args['state_size']}") # 这里打印状态的形状
         
         # 初始化模型参数
         self.emb = nn.Embedding.from_pretrained(w['emb.weight'], freeze=True)
 
         if self.onnx_opset >= 17:
-            self.ln0 = nn.LayerNorm(self.n_embd)
+            self.ln0 = nn.LayerNorm(self.args['n_embd'])
             self.ln0.weight = nn.Parameter(w['blocks.0.ln0.weight'])
             self.ln0.bias = nn.Parameter(w['blocks.0.ln0.bias'])
         else:
@@ -489,20 +662,20 @@ class RWKV_RNN(MyModule):
 
         self.blocks = nn.ModuleList()
         
-        for i in range(self.num_layer):
+        for i in range(self.args['n_layer']):
             # 提取当前块的权重
             block_w = {k[len(f'blocks.{i}.'):]: v for k, v in w.items() if f'blocks.{i}.' in k}
-            self.blocks.append(RWKV_Block(block_w, self.n_embd, self.n_head, self.args, self.onnx_opset))
+            self.blocks.append(RWKV_Block(self.args, block_w, i))
 
         if self.onnx_opset >= 17:
-            self.ln_out = nn.LayerNorm(self.n_embd)
+            self.ln_out = nn.LayerNorm(self.args['n_embd'])
             self.ln_out.weight = nn.Parameter(w['ln_out.weight'])
             self.ln_out.bias = nn.Parameter(w['ln_out.bias'])
         else:
             self.ln_out_weight = nn.Parameter(w['ln_out.weight'])
             self.ln_out_bias = nn.Parameter(w['ln_out.bias'])
         
-        self.head = nn.Linear(self.n_embd, self.args['vocab_size'], bias=False)
+        self.head = nn.Linear(self.args['n_embd'], self.args['vocab_size'], bias=False)
         self.head.weight = nn.Parameter(w['head.weight'])
 
     @MyFunction
@@ -610,13 +783,13 @@ class RWKV_RNN(MyModule):
             state (torch.Tensor): 隐藏状态张量。[Batch_size, State_size, N_embd], device="cpu"
         """
         # 初始化状态
-        state = torch.zeros(batch_size, self.state_size[0], self.state_size[1])
+        state = torch.zeros(batch_size, self.args['state_size'][0], self.args['state_size'][1])
 
         # 这里把训练好的state加载进去
         if 'STATE_NAME' in self.args and self.args['STATE_NAME'] != '':
             STATE = torch.load(self.args['STATE_NAME'].replace(
                 ".pth", "")+'.pth', map_location=torch.device("cpu"))
-            head_size = self.head_size
+            head_size = self.args['head_size']
             for i, (key, value) in enumerate(STATE.items()):
                 state[:, ((2 + head_size)*i + 2):((2 + head_size)*(i + 1)),
                       :] = value.contiguous().permute(0, 2, 1).reshape(head_size, -1)
@@ -641,10 +814,10 @@ class RWKV_RNN(MyModule):
         Returns:
             None
         """
-        head_size = self.head_size
-        n_head = self.n_head
+        head_size = self.args['head_size']
+        n_head = self.args['n_head']
         STATE = {}
-        for i in range(1584 // (2 + head_size)):
+        for i in range(self.args['state_size'][0] // (2 + head_size)):
             start = (2 + head_size) * i + 2
             end = (2 + head_size) * (i + 1)
             layer_state = state[:, start:end, :].detach()  # 使用 detach() 创建一个新的张量
